@@ -5,7 +5,11 @@ import vk "vendor:vulkan"
 import "core:log"
 import "core:strings"
 
-REQUIRED_DEVICE_EXTENSIONS : []string : {vk.KHR_SWAPCHAIN_EXTENSION_NAME, vk.EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME}
+REQUIRED_DEVICE_EXTENSIONS : []string : {
+    vk.KHR_SWAPCHAIN_EXTENSION_NAME,
+    vk.EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME,
+    // vk.KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+}
 
 Device :: struct {
     physical        : vk.PhysicalDevice,

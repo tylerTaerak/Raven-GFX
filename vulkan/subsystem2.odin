@@ -10,18 +10,20 @@ import "base:runtime"
 
 Worker_Data :: struct {
     command_pool    : vk.CommandPool,
-    command_buffers : [FRAMES_IN_FLIGHT]vk.CommandBuffer
+    command_buffers : [FRAMES_IN_FLIGHT]vk.CommandBuffer,
+    submit_infos    : [dynamic]vk.SubmitInfo2
 }
 
 Worker :: struct {
-    thread          : ^thread.Thread,
-    frame_index     : int,
-    graphics        : Worker_Data,
-    compute         : Worker_Data,
-    transfer        : Worker_Data,
-    reset_event     : sync.Auto_Reset_Event,
-    alloc           : runtime.Allocator,
-    exit            : bool
+    thread                  : ^thread.Thread,
+    frame_index             : int,
+    graphics                : Worker_Data,
+    compute                 : Worker_Data,
+    transfer                : Worker_Data,
+    jobs                    : ^Job_Queue,
+    reset_event             : sync.Auto_Reset_Event,
+    alloc                   : runtime.Allocator,
+    exit                    : bool
 }
 
 add_worker :: proc(ctx : ^Context) -> (ok : bool = true) {
@@ -47,7 +49,7 @@ handle_compute_job :: proc(ctx : ^Context, job : Compute_Job, command_buffer : v
 handle_transfer_job :: proc(ctx : ^Context, job : Transfer_Job, command_buffer : vk.CommandBuffer) {
 }
 
-worker_proc :: proc(ctx : ^Context, sys_idx : int, job_queue : ^Job_Queue) {
+worker_proc :: proc(ctx : ^Context, sys_idx : int) {
     worker := &ctx.workers[sys_idx]
 
     _init_worker_graphics_data(ctx, worker)
@@ -70,95 +72,85 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int, job_queue : ^Job_Queue) {
         vk.ResetCommandPool(ctx.device.logical, worker.compute.command_pool, {})
         vk.ResetCommandPool(ctx.device.logical, worker.transfer.command_pool, {})
 
-        // TODO)) Utilize vk.TimelineSemaphoreSubmitInfo to properly orchestrate timing of all the different jobs
-        // We do this by specifying .TIMELINE in a vk.SemaphoreTypeCreateInfo and linking that to vk.SemaphoreCreateInfo's pNext field
-        // Then use vk.QueueSubmit2 with vk.SubmitInfo2 to pass in the vk.TimelineSemaphoreSubmitInfo as pNext
+        clear(&worker.graphics.submit_infos)
+        clear(&worker.compute.submit_infos)
+        clear(&worker.transfer.submit_infos)
 
         for {
             job : Job
             has_job : bool
 
-            if job, has_job = pop(job_queue); has_job {
-                dependencies_covered := true
+            if job, has_job = pop(worker.jobs); has_job {
 
-                for dep, _ in job.depends_on {
-                    switch ptr in dep {
-                        case ^vk.Buffer:
-                            if !(job_queue.buffer_writes[ptr^] in ctx.processed_jobs) {
-                                dependencies_covered = false
-                                break
-                            }
-                        case ^vk.Pipeline:
-                            if !(job_queue.pipelines[ptr^] in ctx.processed_jobs) {
-                                dependencies_covered = false
-                                break
-                            }
+                wait_infos := make([]vk.SemaphoreSubmitInfo, len(job.depends_on))
+
+                for i in 0..<len(wait_infos) {
+                    wait_infos[i] = vk.SemaphoreSubmitInfo{
+                        sType = .SEMAPHORE_SUBMIT_INFO,
+                        
                     }
                 }
 
-                if !dependencies_covered {
-                    push(job_queue, job)
-                    continue
+                submit_info : vk.SubmitInfo2
+                submit_info.sType = .SUBMIT_INFO_2
+                submit_info.waitSemaphoreInfoCount = u32(len(wait_infos))
+                if len(wait_infos) > 0 {
+                    submit_info.pWaitSemaphoreInfos = &wait_infos[0]
                 }
+                
+                submit_info.signalSemaphoreInfoCount = 1
+
+                signal_semaphore := vk.SemaphoreSubmitInfo{
+                    sType=.SEMAPHORE_SUBMIT_INFO,
+                    semaphore=ctx.core_timeline,
+                    value=ctx.current_timeline_val + u64(job.timeline_stage)
+                }
+
+                submit_info.pSignalSemaphoreInfos = &signal_semaphore
+                submit_info.commandBufferInfoCount = 1
+
+                cmd_buffer_submit_info : vk.CommandBufferSubmitInfo
+                cmd_buffer_submit_info.sType = .COMMAND_BUFFER_SUBMIT_INFO
+                
+                submit_info.pCommandBufferInfos = &cmd_buffer_submit_info
 
                 switch val in job.data {
                     case Graphics_Job:
                         // handle graphics job
                         handle_graphics_job(ctx, val, worker.graphics.command_buffers[worker.frame_index])
+                        cmd_buffer_submit_info.commandBuffer = ctx.primary_cmd_buf[ctx.frame_idx]
+                        append(&worker.graphics.submit_infos, submit_info)
                     case Compute_Job:
                         // handle compute job
                         handle_compute_job(ctx, val, worker.compute.command_buffers[worker.frame_index])
+                        cmd_buffer_submit_info.commandBuffer = worker.compute.command_buffers[ctx.frame_idx]
+                        append(&worker.compute.submit_infos, submit_info)
                     case Transfer_Job:
                         // handle transfer job
                         handle_transfer_job(ctx, val, worker.transfer.command_buffers[worker.frame_index])
+                        cmd_buffer_submit_info.commandBuffer = worker.transfer.command_buffers[ctx.frame_idx]
+                        append(&worker.transfer.submit_infos, submit_info)
                 }
+
             } else {
                 break
             }
         }
+        // submit transfer and compute queues
+        // the graphics jobs need to be submitted on the main thread
 
-        log.info("Jobs finished!")
+        compute_queue_fam, _ := find_queue_family_by_type(ctx, {.COMPUTE})
+        transfer_queue_fam, _ := find_queue_family_by_type(ctx, {.TRANSFER})
+
+        compute_queue, transfer_queue : vk.Queue
+
+        vk.GetDeviceQueue(ctx.device.logical, compute_queue_fam.family_idx, 0, &compute_queue)
+        vk.GetDeviceQueue(ctx.device.logical, transfer_queue_fam.family_idx, 0, &transfer_queue)
+
+        vk.QueueSubmit2(compute_queue, u32(len(worker.compute.submit_infos)), &worker.compute.submit_infos[0], 0)
+        vk.QueueSubmit2(transfer_queue, u32(len(worker.transfer.submit_infos)), &worker.transfer.submit_infos[0], 0)
+
         sync.wait_group_done(&ctx.wait_group)
-
-
-        // log.info("Starting Draw Procedure")
-
-
-        // log.info("Command pool reset")
-
-        // inheritance_info : vk.CommandBufferInheritanceInfo
-        // inheritance_info.sType = .COMMAND_BUFFER_INHERITANCE_INFO
-        // inheritance_info.renderPass = ctx.render_pass
-
-        // // begin recording buffer
-        // begin_info : vk.CommandBufferBeginInfo
-        // begin_info.sType = .COMMAND_BUFFER_BEGIN_INFO
-        // begin_info.pInheritanceInfo = &inheritance_info
-        // begin_info.flags = {.RENDER_PASS_CONTINUE}
-
-        // buf := system.command_buffers[system.frame_index]
-
-        // res := vk.BeginCommandBuffer(buf, &begin_info)
-        // if res != .SUCCESS {
-        //     log.error("Error beginning command buffer", res)
-        // }
-
-        // log.info("Command buffer begin")
-
-        // for pipeline in system.pipelines {
-        //     log.info("Binding pipeline")
-        //     // bind pipeline
-        //     vk.CmdBindPipeline(buf, .GRAPHICS, pipeline)
-
-        //     log.info("Drawing")
-        //     // add draw commands to buffer
-        //     vk.CmdDraw(buf, 3, 1, 0, 0)
-
-        // }
-
-        // // end recording buffer
-        // vk.EndCommandBuffer(buf)
-        // log.info("Command Buffer End", buf)
     }
 }
 

@@ -53,7 +53,7 @@ Job_Queue :: struct {
     pipelines       : map[vk.Pipeline]u32
 }
 
-push_data :: proc(q : ^Job_Queue, job: Job_Data) {
+push :: proc(q : ^Job_Queue, job: Job_Data) {
     sync.mutex_lock(&q.mutex)
     defer sync.mutex_unlock(&q.mutex)
 
@@ -76,15 +76,6 @@ push_data :: proc(q : ^Job_Queue, job: Job_Data) {
     queue.push_back(&q.jobs, full_job)
 }
 
-push_job :: proc(q : ^Job_Queue, job : Job) {
-    sync.mutex_lock(&q.mutex)
-    defer sync.mutex_unlock(&q.mutex)
-
-    queue.push_back(&q.jobs, job)
-}
-
-push :: proc{push_data, push_job}
-
 pop :: proc(q : ^Job_Queue) -> (job : Job, ok : bool) {
     sync.mutex_lock(&q.mutex)
     defer sync.mutex_unlock(&q.mutex)
@@ -92,6 +83,13 @@ pop :: proc(q : ^Job_Queue) -> (job : Job, ok : bool) {
     job, ok = queue.pop_front_safe(&q.jobs)
 
     return
+}
+
+q_len :: proc(q : ^Job_Queue) -> int {
+    sync.mutex_lock(&q.mutex)
+    defer sync.mutex_unlock(&q.mutex)
+
+    return queue.len(q.jobs)
 }
 
 add_job_dependency :: proc(job : ^Job, dependency : Dependency) {
