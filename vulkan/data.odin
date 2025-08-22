@@ -252,5 +252,5 @@ delete_data :: proc(ctx: ^Context) {
 
     delete(ctx.data.meshes)
     delete(ctx.data.primitives)
-    delete(ctx.data.instances)
+    // delete(ctx.data.instances)
 }

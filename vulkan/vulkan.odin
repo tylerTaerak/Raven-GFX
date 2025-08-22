@@ -43,6 +43,7 @@ Context :: struct {
     core_timeline       : vk.Semaphore,
     last_timeline_val   : [FRAMES_IN_FLIGHT]u64,
     current_timeline_val: u64,
+    delete_buffers      : [dynamic]Buffer,
 
     // asset data
     data                : Data
@@ -143,6 +144,12 @@ run_frame :: proc(ctx : ^Context) {
     wait_info.pValues = &last_frame_value
 
     vk.WaitSemaphores(ctx.device.logical, &wait_info, 15_000_000)
+
+    for i in 0..<len(ctx.delete_buffers) {
+        _destroy_buffer(ctx, ctx.delete_buffers[i])
+    }
+
+    clear(&ctx.delete_buffers)
 
     ctx.current_timeline_val += 1
 

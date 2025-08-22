@@ -5,6 +5,7 @@ import vk "vendor:vulkan"
 
 import "core:thread"
 import "core:sync"
+import "core:slice"
 
 import "base:runtime"
 
@@ -47,6 +48,14 @@ handle_compute_job :: proc(ctx : ^Context, job : Compute_Job, command_buffer : v
 }
 
 handle_transfer_job :: proc(ctx : ^Context, job : Transfer_Job, command_buffer : vk.CommandBuffer) {
+    assert(job.src_buffer.size == job.dest_buffer.size)
+
+    copy_info : vk.BufferCopy
+    copy_info.size = job.src_buffer.size
+    copy_info.srcOffset = job.src_buffer.offset
+    copy_info.dstOffset = job.dest_buffer.offset
+    
+    vk.CmdCopyBuffer(command_buffer, job.src_buffer.buffer, job.dest_buffer.buffer, 1, &copy_info)
 }
 
 worker_proc :: proc(ctx : ^Context, sys_idx : int) {
@@ -82,12 +91,18 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
 
             if job, has_job = pop(worker.jobs); has_job {
 
-                wait_infos := make([]vk.SemaphoreSubmitInfo, len(job.depends_on))
+                wait_infos : [dynamic]vk.SemaphoreSubmitInfo
+                defer delete(wait_infos)
 
-                for i in 0..<len(wait_infos) {
-                    wait_infos[i] = vk.SemaphoreSubmitInfo{
-                        sType = .SEMAPHORE_SUBMIT_INFO,
-                        
+                deps, _ := slice.map_keys(job.depends_on)
+
+                for d in deps {
+                    if d in worker.jobs.dependencies {
+                        append(&wait_infos, vk.SemaphoreSubmitInfo {
+                            sType = .SEMAPHORE_SUBMIT_INFO,
+                            semaphore = ctx.core_timeline,
+                            value = u64(worker.jobs.dependencies[d]) + ctx.current_timeline_val
+                        })
                     }
                 }
 

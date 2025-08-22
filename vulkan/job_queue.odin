@@ -15,8 +15,8 @@ Compute_Job :: struct {
 }
 
 Transfer_Job :: struct {
-    src_buffer          : ^Buffer,
-    dest_buffer         : ^Buffer,
+    src_buffer          : Raw_Buffer_Slice,
+    dest_buffer         : Raw_Buffer_Slice,
 }
 
 Job_Data :: union {
@@ -26,8 +26,8 @@ Job_Data :: union {
 }
 
 Dependency :: union {
-    ^vk.Buffer,
-    ^vk.Pipeline
+    vk.Buffer,
+    vk.Pipeline
 }
 
 Job :: struct {
@@ -49,8 +49,7 @@ Job_Queue :: struct {
     jobs            : queue.Queue(Job),
     mutex           : sync.Mutex,
     timeline_sems   : []vk.Semaphore,
-    buffer_writes   : map[vk.Buffer]u32,
-    pipelines       : map[vk.Pipeline]u32
+    dependencies     : map[Dependency]u32,
 }
 
 push :: proc(q : ^Job_Queue, job: Job_Data) {
@@ -63,14 +62,14 @@ push :: proc(q : ^Job_Queue, job: Job_Data) {
 
     switch subjob in full_job.data {
         case Graphics_Job:
-            q.pipelines[subjob.pipeline] = full_job.timeline_stage
+            q.dependencies[subjob.pipeline] = full_job.timeline_stage
             for &buf in subjob.data {
-                add_job_dependency(&full_job, &buf.buf)
+                add_job_dependency(&full_job, buf.buf)
             }
         case Compute_Job:
         case Transfer_Job:
-            q.buffer_writes[subjob.dest_buffer.buf] = full_job.timeline_stage
-            add_job_dependency(&full_job, &subjob.src_buffer.buf)
+            q.dependencies[subjob.dest_buffer.buffer] = full_job.timeline_stage
+            add_job_dependency(&full_job, subjob.src_buffer.buffer)
     }
 
     queue.push_back(&q.jobs, full_job)
