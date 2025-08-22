@@ -34,7 +34,12 @@ Typed_Buffer :: struct ($Type : typeid) {
 
 /* Create Buffer */
 
-create_buffer :: proc(ctx: ^Context, initial_capacity: int, queue_families : ..QueueFamily) -> (buf : Buffer) {
+create_buffer :: proc(
+    ctx: ^Context,
+    initial_capacity: int,
+    queue_families : []QueueFamily,
+    usage_flags: vk.BufferUsageFlags = {.STORAGE_BUFFER, .TRANSFER_DST}) -> (buf : Buffer) {
+
     create_info : vk.BufferCreateInfo
     create_info.sType = .BUFFER_CREATE_INFO
     create_info.size = vk.DeviceSize(initial_capacity)
