@@ -50,7 +50,8 @@ Instance_Handle :: distinct u32
 
 // Primitives do not come and go, so we just need an offset and count
 Primitive :: struct {
-    slices : [core.Descriptor_Type]Buffer_Slice,
+    indices     : Buffer_Slice,
+    descriptors : [core.Descriptor_Type]Buffer_Slice,
 }
 
 Primitive_Handle :: distinct u32
@@ -59,7 +60,8 @@ Primitive_Handle :: distinct u32
 // with the assumption that we may re-add instances later
 Mesh :: struct {
     primitives  : []Primitive,
-    instances   : Buffer_Slice
+    instances   : Buffer_Slice,
+    instance_count : u32
 }
 
 Mesh_Handle :: distinct u32
@@ -87,90 +89,59 @@ init_data :: proc(ctx: ^Context) {
 
 load_mesh :: proc(ctx: ^Context, mesh_data: core.Model_Data, initial_instance_count : u32 = DEFAULT_INSTANCE_COUNT) -> Mesh_Handle {
     // Load Mesh Data
-    // mesh : Mesh
-    // mesh.primitives_count = u32(len(mesh_data.primitives))
-    // 
-    // current_mesh_count := len(ctx.data.meshes)
-    // if current_mesh_count != 0 {
-    //     last_mesh := ctx.data.meshes[current_mesh_count-1]
-    //     mesh.primitives_offset = last_mesh.primitives_offset + last_mesh.primitives_count
-    //     mesh.instance_offset = last_mesh.instance_offset + last_mesh.instance_capacity
-    // }
+    mesh : Mesh
+    mesh.primitives = make([]Primitive, len(mesh_data.primitives))
 
-    // mesh.instance_count = initial_instance_count
+    // Load Primitives Data
+    for &p, i in mesh_data.primitives {
+        primitive : Primitive
 
-    // append(&ctx.data.meshes, mesh)
+        start_idx : vk.DeviceSize
+        for &m in ctx.data.meshes {
+            for &prim in m.primitives {
+                idx := prim.indices.offset + prim.indices.size
+                if idx > start_idx {
+                    start_idx = idx
+                }
+            }
+        }
 
-    // mesh_idx := Mesh_Handle(len(ctx.data.meshes) - 1)
+        primitive.indices =  make_slice_from_size_and_offset(&ctx.data.index_buffer, vk.DeviceSize(start_idx), vk.DeviceSize(len(p.indices)))
 
-    // // Load Primitives Data
-    // for &primitive in mesh_data.primitives {
-    //     current_primitives := len(ctx.data.primitives)
+        for descriptor in core.Descriptor_Type {
+            start_idx = 0
+            for &m in ctx.data.meshes {
+                for &prim in m.primitives {
+                    idx := prim.descriptors[descriptor].offset + prim.descriptors[descriptor].size
+                    if idx > start_idx {
+                        start_idx = idx
+                    }
+                }
+            }
 
-    //     new_prim : Primitive
-    //     new_prim.index_count = u32(len(primitive.indices))
-    //     if current_primitives != 0 {
-    //         last_primitive := ctx.data.primitives[current_primitives-1]
-    //         new_prim.index_offset = last_primitive.index_offset + last_primitive.index_count
-    //     }
+            primitive.descriptors[descriptor] = make_slice_from_size_and_offset(&ctx.data.vertex_descriptors[descriptor], start_idx, vk.DeviceSize(len(p.descriptor_data[descriptor])))
+        }
 
-    //     append(&ctx.data.primitives, new_prim)
+        mesh.primitives[i] = primitive
+    }
 
-    //     // Now load the byte data
+    start_idx : vk.DeviceSize
+    for &m in ctx.data.meshes {
+        idx := m.instances.offset + m.instances.size
+        if idx > start_idx {
+            start_idx = idx
+        }
+    }
 
-    //     for t in core.Descriptor_Type {
-    //         buf : vk.Buffer
+    mesh.instances = make_slice_from_size_and_offset(&ctx.data.instance_descriptor, start_idx, vk.DeviceSize(initial_instance_count))
 
-    //         q_fam, _ := find_queue_family_by_type(ctx, {.TRANSFER})
+    append(&ctx.data.meshes, mesh)
 
-    //         buf_create_info : vk.BufferCreateInfo
-    //         buf_create_info.sType = .BUFFER_CREATE_INFO
-    //         buf_create_info.size = vk.DeviceSize(len(primitive.descriptor_data[t]))
-    //         buf_create_info.usage = {.TRANSFER_SRC}
-    //         buf_create_info.queueFamilyIndexCount = 1
-    //         buf_create_info.pQueueFamilyIndices = &q_fam.family_idx
-    //         buf_create_info.sharingMode = .EXCLUSIVE
-
-    //         vk.CreateBuffer(ctx.device.logical, &buf_create_info, {}, &buf)
-    //         defer vk.DestroyBuffer(ctx.device.logical, buf, {})
-
-    //         mem_req : vk.MemoryRequirements
-    //         vk.GetBufferMemoryRequirements(ctx.device.logical, buf, &mem_req)
-
-    //         phys_mem_props : vk.PhysicalDeviceMemoryProperties
-    //         vk.GetPhysicalDeviceMemoryProperties(ctx.device.physical, &phys_mem_props)
-
-    //         mem_index : u32
-    //         for i in 0..<phys_mem_props.memoryTypeCount {
-    //             mem_type := phys_mem_props.memoryTypes[i]
-    //             if .HOST_VISIBLE in mem_type.propertyFlags && .HOST_COHERENT in mem_type.propertyFlags {
-    //                 mem_index = i
-    //             }
-    //         }
-
-    //         mem_alloc_info : vk.MemoryAllocateInfo
-    //         mem_alloc_info.sType = .MEMORY_ALLOCATE_INFO
-    //         mem_alloc_info.allocationSize = mem_req.size
-    //         mem_alloc_info.memoryTypeIndex = mem_index
-
-    //         mem_block : vk.DeviceMemory
-
-    //         vk.AllocateMemory(ctx.device.logical, &mem_alloc_info, {}, &mem_block)
-
-    //         data : rawptr
-    //         vk.MapMemory(ctx.device.logical, mem_block, {}, vk.DeviceSize(len(primitive.descriptor_data[t])), {}, &data)
-
-    //         mem.copy(data, raw_data(primitive.descriptor_data[t]), len(primitive.descriptor_data[t]))
-
-    //         // TODO))  get starting offset for each descriptor type
-    //     }
-    // }
-
-    return 0
+    return Mesh_Handle(len(ctx.data.meshes)-1)
 }
 
 unload_mesh :: proc(ctx: ^Context, handle: Mesh_Handle) {
-    // TODO))
+    // TODO)) This one is the trickier one
 }
 
 load_material :: proc(ctx: ^Context) -> Material_Handle {
@@ -183,12 +154,14 @@ unload_material :: proc(ctx: ^Context, handle: Material_Handle) {
 }
 
 create_graphics_object :: proc(ctx: ^Context, mesh: Mesh_Handle, model_matrix: matrix[4, 4]f32 = 1) -> Instance_Handle{
-    // TODO))
-    return 0
+    handle := ctx.data.meshes[mesh].instance_count
+    ctx.data.meshes[mesh].instance_count += 1
+
+    return Instance_Handle(handle)
 }
 
 delete_graphics_object :: proc(ctx: ^Context, handle: Instance_Handle) {
-    // TODO))
+    // TODO)) This one is the trickier one
 }
 
 delete_data :: proc(ctx: ^Context) {
