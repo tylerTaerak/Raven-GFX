@@ -47,7 +47,7 @@ create_pipeline :: proc(ctx : ^Context, vertex_path, fragment_path : string) -> 
         layout
     ) or_return
 
-    add_subsystem(ctx, pipeline) or_return
+    append(&ctx.pipelines, pipeline)
 
     return
 }

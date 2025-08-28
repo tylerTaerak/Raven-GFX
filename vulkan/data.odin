@@ -57,7 +57,7 @@ Data :: struct {
 
     meshes : [dynamic]Mesh,
 
-    draw_commands : [dynamic]vk.DrawIndexedIndirectCommand
+    draw_commands : [FRAMES_IN_FLIGHT]Buffer
 }
 
 init_data :: proc(ctx: ^Context) {
@@ -133,6 +133,9 @@ commit_draws :: proc(ctx: ^Context) {
     instances : [dynamic]Instance
     defer delete(instances)
 
+    draw_commands : [dynamic]vk.DrawIndexedIndirectCommand
+    defer delete(draw_commands)
+
     for &mesh in ctx.data.meshes {
         for &prim in mesh.primitives {
             if len(prim.instances) == 0 do continue
@@ -147,7 +150,7 @@ commit_draws :: proc(ctx: ^Context) {
             cmd.instanceCount = u32(len(prim.instances))
 
             // these draw commands get cleared out after 
-            append(&ctx.data.draw_commands, cmd)
+            append(&draw_commands, cmd)
 
             start_idx += len(prim.instances)
             vertex_start_idx += int(prim.vertex_count)
@@ -166,6 +169,21 @@ commit_draws :: proc(ctx: ^Context) {
             buffer = ctx.data.instance_descriptor.buf,
             offset = 0,
             size   = vk.DeviceSize(size_of(Instance) * len(instances))
+        }
+    })
+
+    mem.copy(ctx.data.draw_commands[ctx.frame_idx].host_data, raw_data(draw_commands), size_of(vk.DrawIndexedIndirectCommand) * len(draw_commands))
+
+    push(&ctx.job_queue, Transfer_Job{
+        src_buffer = Raw_Buffer_Slice{
+            buffer = ctx.data.draw_commands[ctx.frame_idx].staging_buffer,
+            offset = 0,
+            size   = vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand) * len(draw_commands))
+        },
+        dest_buffer = {
+            buffer = ctx.data.draw_commands[ctx.frame_idx].buf,
+            offset = 0,
+            size   = vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand) * len(draw_commands))
         }
     })
 }

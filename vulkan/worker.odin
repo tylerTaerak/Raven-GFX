@@ -27,21 +27,20 @@ Worker :: struct {
     exit                    : bool
 }
 
-add_worker :: proc(ctx : ^Context) -> (ok : bool = true) {
-    new_worker : Worker
-    new_worker.alloc = runtime.heap_allocator()
-    // append(&ctx.subsystems, new_system)
+create_worker :: proc(ctx : ^Context, id : int) -> (worker: Worker, ok : bool = true) {
+    worker.alloc = runtime.heap_allocator()
 
     thread_ctx : runtime.Context
     thread_ctx = runtime.default_context()
-    thread_ctx.allocator = new_worker.alloc
+    thread_ctx.allocator = worker.alloc
     thread_ctx.logger = log.create_console_logger()
 
-    thread.create_and_start_with_poly_data2(ctx, len(ctx.subsystems) - 1, worker_proc, thread_ctx)
+    thread.create_and_start_with_poly_data2(ctx, id, worker_proc, thread_ctx)
     return
 }
 
 handle_graphics_job :: proc(ctx : ^Context, job : Graphics_Job, command_buffer : vk.CommandBuffer) {
+    vk.CmdDrawIndexedIndirect(command_buffer, ctx.data.draw_commands[ctx.frame_idx].buf, 0, 0, 0)
 }
 
 handle_compute_job :: proc(ctx : ^Context, job : Compute_Job, command_buffer : vk.CommandBuffer) {

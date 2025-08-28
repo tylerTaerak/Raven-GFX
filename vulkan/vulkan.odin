@@ -13,12 +13,6 @@ FRAMES_IN_FLIGHT :: 3
 
 WORKER_THREAD_COUNT :: 4
 
-Frame_Sync :: struct {
-    in_flight_fence : vk.Fence,
-    image_available : vk.Semaphore,
-    render_finished : vk.Semaphore
-}
-
 Context :: struct {
     // init fields
     instance            : vk.Instance,
@@ -32,8 +26,7 @@ Context :: struct {
 
     // runtime fields
     frame_idx           : int,
-    frame_sync_data     : [FRAMES_IN_FLIGHT]Frame_Sync,
-    subsystems          : [dynamic]Subsystem,
+    frame_semaphores    : [FRAMES_IN_FLIGHT]vk.Semaphore,
     workers             : [WORKER_THREAD_COUNT]Worker,
     wait_group          : sync.Wait_Group,
 
@@ -46,13 +39,10 @@ Context :: struct {
     delete_buffers      : [dynamic]Buffer,
 
     // asset data
-    data                : Data
+    data                : Data,
+    pipelines           : [dynamic]Pipeline
 }
 
-// TODO)) I think this is the extent we need for basic rendering (of course more may be required later),
-// but this is the basic stuff that now supports the common context
-// the next thing to do is determine how workers need to work in order to properly run graphics/compute
-// systems in parallel
 create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = true) {
     // first off, load our Vulkan procedures
     vk_instance_proc_addr := sdl.Vulkan_GetVkGetInstanceProcAddr()
@@ -89,14 +79,13 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
 
     log.info("Created framebuffers")
 
-    // for &f in ctx.frame_sync_data {
-    //     f.in_flight_fence = create_fence(&ctx) or_return
-    //     f.image_available = create_semaphore(&ctx) or_return
-    //     f.render_finished = create_semaphore(&ctx) or_return
-    // }
-
-    // log.info("Created sync mechanisms")
-
+    for i in 0..<FRAMES_IN_FLIGHT {
+        create_info : vk.SemaphoreCreateInfo
+        create_info.sType = .SEMAPHORE_CREATE_INFO
+        if vk.CreateSemaphore(ctx.device.logical, &create_info, {}, &ctx.frame_semaphores[i]) != .SUCCESS {
+            ok = false
+        }
+    }
     queue, _ := find_queue_family_present_support(&ctx)
     cmd_pool_create_info : vk.CommandPoolCreateInfo
     cmd_pool_create_info.sType = .COMMAND_POOL_CREATE_INFO
@@ -127,16 +116,26 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
         ok = false
     }
 
+    for i in 0..<WORKER_THREAD_COUNT {
+        ctx.workers, ok = create_worker(&ctx, i)
+    }
+
     return
 }
 
 run_frame :: proc(ctx : ^Context) {
-    frame := ctx.frame_sync_data[ctx.frame_idx]
     img_idx : u32
-    vk.AcquireNextImageKHR(ctx.device.logical, ctx.swapchain.chain, 15_000_000, frame.image_available, 0, &img_idx)
+    vk.AcquireNextImageKHR(ctx.device.logical, ctx.swapchain.chain, 15_000_000, ctx.frame_semaphores[ctx.frame_idx], 0, &img_idx)
 
     // commit all of our draw commands for this frame
     commit_draws(ctx)
+
+    for pipeline in ctx.pipelines {
+        push(&ctx.job_queue, Graphics_Job{
+            pipeline=pipeline,
+            data={ctx.data.draw_commands[ctx.frame_idx]}
+        })
+    }
 
     last_frame_value := ctx.last_timeline_val[ctx.frame_idx]
 
@@ -193,15 +192,12 @@ run_frame :: proc(ctx : ^Context) {
         worker.jobs = &jobs
     }
 
-    // start frame processes for subsystems and wait
+    // start frame processes for worker threads and do some simple things before waiting
     sync.wait_group_add(&ctx.wait_group, len(ctx.workers))
 
     for &worker in ctx.workers {
         sync.auto_reset_event_signal(&worker.reset_event)
     }
-
-    sync.wait_group_wait(&ctx.wait_group)
-
 
     gfx_fam, ok_gfx := find_queue_family_by_type(ctx, {.GRAPHICS})
     prs_fam, ok_prs := find_queue_family_present_support(ctx)
@@ -218,14 +214,20 @@ run_frame :: proc(ctx : ^Context) {
         append(&buffers, worker.graphics.command_buffers[ctx.frame_idx])
     }
 
+    // wait for worker threads
+    sync.wait_group_wait(&ctx.wait_group)
+
     vk.CmdExecuteCommands(ctx.primary_cmd_buf[ctx.frame_idx], u32(len(buffers)), &buffers[0])
 
     vk.CmdEndRenderPass(ctx.primary_cmd_buf[ctx.frame_idx])
     vk.EndCommandBuffer(ctx.primary_cmd_buf[ctx.frame_idx])
 
     submit_infos : [dynamic]vk.SubmitInfo2
+    defer delete(submit_infos)
 
     final_wait_infos    : [dynamic]vk.SemaphoreSubmitInfo
+    defer delete(final_wait_infos)
+
     highest_value       : u64
 
     for &worker in ctx.workers {
@@ -240,13 +242,23 @@ run_frame :: proc(ctx : ^Context) {
                 append(&final_wait_infos, info.pSignalSemaphoreInfos[i])
             }
         }
+
+        for &info in worker.compute.submit_infos {
+            for i in 0..<info.signalSemaphoreInfoCount {
+                if highest_value < info.pSignalSemaphoreInfos[i].value {
+                    highest_value = info.pSignalSemaphoreInfos[i].value
+                }
+            }
+        }
+
+        for &info in worker.transfer.submit_infos {
+            for i in 0..<info.signalSemaphoreInfoCount {
+                if highest_value < info.pSignalSemaphoreInfos[i].value {
+                    highest_value = info.pSignalSemaphoreInfos[i].value
+                }
+            }
+        }
     }
-
-    present_semaphore : vk.Semaphore
-
-    present_create_info : vk.SemaphoreCreateInfo
-    present_create_info.sType = .SEMAPHORE_CREATE_INFO
-    vk.CreateSemaphore(ctx.device.logical, &present_create_info, {}, &present_semaphore)
 
     frame_signal_info : vk.SemaphoreSubmitInfo
     frame_signal_info.sType = .SEMAPHORE_SUBMIT_INFO
@@ -255,7 +267,7 @@ run_frame :: proc(ctx : ^Context) {
 
     present_signal_info : vk.SemaphoreSubmitInfo
     present_signal_info.sType = .SEMAPHORE_SUBMIT_INFO
-    present_signal_info.semaphore = present_semaphore
+    present_signal_info.semaphore = ctx.frame_semaphores[ctx.frame_idx]
 
     signal_sems := []vk.SemaphoreSubmitInfo{frame_signal_info, present_signal_info}
 
@@ -275,7 +287,7 @@ run_frame :: proc(ctx : ^Context) {
     present_info : vk.PresentInfoKHR
     present_info.sType = .PRESENT_INFO_KHR
     present_info.waitSemaphoreCount = 1
-    present_info.pWaitSemaphores = &present_semaphore
+    present_info.pWaitSemaphores = &ctx.frame_semaphores[ctx.frame_idx]
     present_info.swapchainCount = 1
     present_info.pSwapchains = &ctx.swapchain.chain
     present_info.pImageIndices = &img_idx
@@ -286,15 +298,10 @@ run_frame :: proc(ctx : ^Context) {
 }
 
 destroy_context :: proc(ctx : ^Context) {
-    for &sys in ctx.subsystems {
-        sync.atomic_store(&sys.exit, true)
+    for &w in ctx.workers {
+        sync.atomic_store(&w.exit, true)
     }
 
-    for &f in ctx.frame_sync_data {
-        vk.DestroySemaphore(ctx.device.logical, f.render_finished, {})
-        vk.DestroySemaphore(ctx.device.logical, f.image_available, {})
-        vk.DestroyFence(ctx.device.logical, f.in_flight_fence, {})
-    }
     for f in ctx.swapchain.framebuffers {
         vk.DestroyFramebuffer(ctx.device.logical, f, {})
     }
