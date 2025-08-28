@@ -23,17 +23,6 @@ import "../core"
 
 */
 
-// How are we going to handle instances in this setup? The vertex data has basically written itself,
-// but instances are something that I intend to have change frame-by-frame (such as with the model matrix)
-// So just having them in a descriptor or something like that, I'm not sure if that will work quite as well,
-// especially in scenarios when entities are getting spawned and stuff like that... Maybe just a large buffer?
-
-// So Instances are completely different from Assets. Each asset has a set of vertex data that applies to it,
-// but each instance can differ. I'm thinking I'll kind of need to implement my own sort of GPU-based vector
-
-// We also need a mapped staging buffer for instance data, since instances are something we want to assume
-// can change often
-
 BUFFER_SIZE :: 1_048_576 // 1 MiB
 DEFAULT_INSTANCE_COUNT :: 10
 
@@ -43,25 +32,20 @@ Material :: struct {
 Material_Handle :: distinct u32
 
 // I don't know if we actually need a struct for an instance
-// Instance :: struct {
-// }
-
-Instance_Handle :: distinct u32
+Instance :: struct {
+    model_matrix : matrix[4, 4]f32
+}
 
 // Primitives do not come and go, so we just need an offset and count
 Primitive :: struct {
-    indices     : Buffer_Slice,
-    descriptors : [core.Descriptor_Type]Buffer_Slice,
+    indices         : Buffer_Slice,
+    vertex_count    : u32,
+    descriptors     : [core.Descriptor_Type]Buffer_Slice,
+    instances       : [dynamic]Instance
 }
 
-Primitive_Handle :: distinct u32
-
-// instances come and go, so we need to leave some room for deletion there,
-// with the assumption that we may re-add instances later
 Mesh :: struct {
     primitives  : []Primitive,
-    instances   : Buffer_Slice,
-    instance_count : u32
 }
 
 Mesh_Handle :: distinct u32
@@ -72,7 +56,8 @@ Data :: struct {
     instance_descriptor : Buffer,
 
     meshes : [dynamic]Mesh,
-    // instances : [dynamic]Instance
+
+    draw_commands : [dynamic]vk.DrawIndexedIndirectCommand
 }
 
 init_data :: proc(ctx: ^Context) {
@@ -122,46 +107,72 @@ load_mesh :: proc(ctx: ^Context, mesh_data: core.Model_Data, initial_instance_co
             primitive.descriptors[descriptor] = make_slice_from_size_and_offset(&ctx.data.vertex_descriptors[descriptor], start_idx, vk.DeviceSize(len(p.descriptor_data[descriptor])))
         }
 
+        primitive.vertex_count = p.vertex_count
+
         mesh.primitives[i] = primitive
     }
-
-    start_idx : vk.DeviceSize
-    for &m in ctx.data.meshes {
-        idx := m.instances.offset + m.instances.size
-        if idx > start_idx {
-            start_idx = idx
-        }
-    }
-
-    mesh.instances = make_slice_from_size_and_offset(&ctx.data.instance_descriptor, start_idx, vk.DeviceSize(initial_instance_count))
 
     append(&ctx.data.meshes, mesh)
 
     return Mesh_Handle(len(ctx.data.meshes)-1)
 }
 
-unload_mesh :: proc(ctx: ^Context, handle: Mesh_Handle) {
-    // TODO)) This one is the trickier one
+draw_mesh :: proc(ctx: ^Context, mesh: Mesh_Handle, transform: matrix[4,4]f32) {
+    local_mesh := ctx.data.meshes[mesh]
+
+    for &prim in local_mesh.primitives {
+        append(&prim.instances, Instance{
+            model_matrix=transform
+        })
+    }
+}
+
+commit_draws :: proc(ctx: ^Context) {
+    start_idx, vertex_start_idx : int
+
+    instances : [dynamic]Instance
+    defer delete(instances)
+
+    for &mesh in ctx.data.meshes {
+        for &prim in mesh.primitives {
+            if len(prim.instances) == 0 do continue
+            append(&instances, ..prim.instances[:])
+            clear(&prim.instances)
+
+            cmd : vk.DrawIndexedIndirectCommand
+            cmd.indexCount = u32(prim.indices.size)
+            cmd.firstIndex = u32(prim.indices.offset)
+            cmd.vertexOffset = i32(vertex_start_idx)
+            cmd.firstInstance = u32(start_idx)
+            cmd.instanceCount = u32(len(prim.instances))
+
+            // these draw commands get cleared out after 
+            append(&ctx.data.draw_commands, cmd)
+
+            start_idx += len(prim.instances)
+            vertex_start_idx += int(prim.vertex_count)
+        }
+    }
+
+    mem.copy(ctx.data.instance_descriptor.host_data, raw_data(instances), size_of(Instance) * len(instances))
+
+    push(&ctx.job_queue, Transfer_Job{
+        src_buffer = Raw_Buffer_Slice{
+            buffer = ctx.data.instance_descriptor.staging_buffer,
+            offset = 0,
+            size   = vk.DeviceSize(size_of(Instance) * len(instances))
+        },
+        dest_buffer = Raw_Buffer_Slice{
+            buffer = ctx.data.instance_descriptor.buf,
+            offset = 0,
+            size   = vk.DeviceSize(size_of(Instance) * len(instances))
+        }
+    })
 }
 
 load_material :: proc(ctx: ^Context) -> Material_Handle {
     // TODO)) Not yet implemented
     return 0
-}
-
-unload_material :: proc(ctx: ^Context, handle: Material_Handle) {
-    // TODO))
-}
-
-create_graphics_object :: proc(ctx: ^Context, mesh: Mesh_Handle, model_matrix: matrix[4, 4]f32 = 1) -> Instance_Handle{
-    handle := ctx.data.meshes[mesh].instance_count
-    ctx.data.meshes[mesh].instance_count += 1
-
-    return Instance_Handle(handle)
-}
-
-delete_graphics_object :: proc(ctx: ^Context, handle: Instance_Handle) {
-    // TODO)) This one is the trickier one
 }
 
 delete_data :: proc(ctx: ^Context) {

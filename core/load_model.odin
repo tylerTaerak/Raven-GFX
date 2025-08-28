@@ -12,7 +12,8 @@ Model_Data :: struct {
 
 Primitive_Data :: struct {
     indices : []u32,
-    descriptor_data : [Descriptor_Type][]byte
+    descriptor_data : [Descriptor_Type][]byte,
+    vertex_count : u32
     // material data too
 }
 
@@ -71,6 +72,7 @@ load_models_from_bytes :: proc(bytes : []byte) -> (models: []Model_Data) {
                 copy(vert_idx_data, byte_buffer)
             }
 
+            vertex_count : u32
             for &attr in primitive.attributes {
                 accessor := attr.data
 
@@ -82,6 +84,7 @@ load_models_from_bytes :: proc(bytes : []byte) -> (models: []Model_Data) {
                 #partial switch attr.type {
                     case .position:
                         core_type = .POSITION
+                        vertex_count = u32(accessor.count)
                     case .texcoord:
                         core_type = .TEXCOORD
                     case .color:
@@ -102,6 +105,7 @@ load_models_from_bytes :: proc(bytes : []byte) -> (models: []Model_Data) {
             primitive : Primitive_Data
             primitive.indices = _convert_bytes_to_u32s(vert_idx_data)
             primitive.descriptor_data = descriptor_data
+            primitive.vertex_count = vertex_count
 
             append(&primitives, primitive)
         }

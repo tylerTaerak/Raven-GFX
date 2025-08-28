@@ -135,6 +135,9 @@ run_frame :: proc(ctx : ^Context) {
     img_idx : u32
     vk.AcquireNextImageKHR(ctx.device.logical, ctx.swapchain.chain, 15_000_000, frame.image_available, 0, &img_idx)
 
+    // commit all of our draw commands for this frame
+    commit_draws(ctx)
+
     last_frame_value := ctx.last_timeline_val[ctx.frame_idx]
 
     wait_info : vk.SemaphoreWaitInfo
