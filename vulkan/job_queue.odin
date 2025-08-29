@@ -6,7 +6,7 @@ import vk "vendor:vulkan"
 
 
 Graphics_Job :: struct {
-    pipeline            : vk.Pipeline,
+    pipeline            : Pipeline,
     data                : []Buffer,
 }
 
@@ -17,6 +17,7 @@ Compute_Job :: struct {
 Transfer_Job :: struct {
     src_buffer          : Raw_Buffer_Slice,
     dest_buffer         : Raw_Buffer_Slice,
+    descriptor          : Maybe(vk.DescriptorSet)
 }
 
 Job_Data :: union {
@@ -38,7 +39,7 @@ Job :: struct {
     // this uses a map to represent a set of pointers, rather than a list
     // once jobs are processing, this set should be not be considered valid
     // all values in this map are 'nil'
-    depends_on          : map[Dependency]Maybe(byte),
+    depends_on          : map[Dependency]rawptr,
 
     // this is equivalent to the index of the job in the queue - this is used as
     // the signal semaphore for the job
@@ -62,7 +63,7 @@ push :: proc(q : ^Job_Queue, job: Job_Data) {
 
     switch subjob in full_job.data {
         case Graphics_Job:
-            q.dependencies[subjob.pipeline] = full_job.timeline_stage
+            q.dependencies[subjob.pipeline.data] = full_job.timeline_stage
             for &buf in subjob.data {
                 add_job_dependency(&full_job, buf.buf)
             }

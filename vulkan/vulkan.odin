@@ -38,9 +38,12 @@ Context :: struct {
     current_timeline_val: u64,
     delete_buffers      : [dynamic]Buffer,
 
+
     // asset data
-    data                : Data,
-    pipelines           : [dynamic]Pipeline
+    descriptor_pool     : vk.DescriptorPool,
+    descriptor_sets     : [FRAMES_IN_FLIGHT]vk.DescriptorSet,
+    data                : [FRAMES_IN_FLIGHT]Data,
+    pipelines           : [dynamic]Pipeline,
 }
 
 create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = true) {
@@ -49,7 +52,7 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
 
     vk.load_proc_addresses(rawptr(vk_instance_proc_addr))
 
-    create_instance(&ctx) or_return
+    create_vulkan_instance(&ctx) or_return
     vk.load_proc_addresses_instance(ctx.instance)
 
     if ODIN_DEBUG do create_debug_messenger(&ctx) or_return
@@ -133,7 +136,7 @@ run_frame :: proc(ctx : ^Context) {
     for pipeline in ctx.pipelines {
         push(&ctx.job_queue, Graphics_Job{
             pipeline=pipeline,
-            data={ctx.data.draw_commands[ctx.frame_idx]}
+            data={ctx.data[ctx.frame_idx].draw_commands}
         })
     }
 

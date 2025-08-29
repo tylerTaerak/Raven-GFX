@@ -27,11 +27,6 @@ Raw_Buffer_Slice :: struct {
     size   : vk.DeviceSize
 }
 
-Typed_Buffer :: struct ($Type : typeid) {
-    buffer          : Buffer,
-    element_size    : int
-}
-
 /* Create Buffer */
 
 create_buffer :: proc(
@@ -107,12 +102,6 @@ create_buffer :: proc(
 
     vk.MapMemory(ctx.device.logical, buf.staging_mem, 0, staging_mem_req.size, {}, &buf.host_data)
 
-    return
-}
-
-create_typed_buffer :: proc(ctx : ^Context, $Type : typeid, initial_capacity: int, queue_families: ..QueueFamily) -> (buf : Typed_Buffer(Type)) {
-    buf.buffer = create_buffer(ctx, initial_capacity, queue_families)
-    buf.element_size = size_of(Type)
     return
 }
 

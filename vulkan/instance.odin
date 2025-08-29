@@ -7,7 +7,7 @@ import "core:log"
 import "core:mem"
 import "core:strings"
 
-create_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
+create_vulkan_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
     ext_count : u32
     sdl_ext := sdl.Vulkan_GetInstanceExtensions(&ext_count) // get number of extensions for SDL to use
 

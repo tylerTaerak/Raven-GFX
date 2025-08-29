@@ -5,7 +5,10 @@ import "core:os"
 
 import vk "vendor:vulkan"
 
-Pipeline :: vk.Pipeline
+Pipeline :: struct {
+    data : vk.Pipeline,
+    layout : vk.PipelineLayout
+}
 
 create_pipeline :: proc(ctx : ^Context, vertex_path, fragment_path : string) -> (ok : bool = true) {
     vertex_bin := os.read_entire_file_from_filename(vertex_path) or_return
@@ -47,7 +50,10 @@ create_pipeline :: proc(ctx : ^Context, vertex_path, fragment_path : string) -> 
         layout
     ) or_return
 
-    append(&ctx.pipelines, pipeline)
+    append(&ctx.pipelines, Pipeline{
+        data = pipeline,
+        layout = layout
+    })
 
     return
 }
@@ -214,7 +220,7 @@ load_pipeline :: proc(ctx : ^Context,
                       rasterizer : ^vk.PipelineRasterizationStateCreateInfo,
                       multisampling : ^vk.PipelineMultisampleStateCreateInfo,
                       color_blend : ^vk.PipelineColorBlendStateCreateInfo,
-                      layout : vk.PipelineLayout) -> (pipeline : Pipeline, ok : bool = true) {
+                      layout : vk.PipelineLayout) -> (pipeline : vk.Pipeline, ok : bool = true) {
     create_info : vk.GraphicsPipelineCreateInfo
     create_info.sType = .GRAPHICS_PIPELINE_CREATE_INFO
     create_info.stageCount = u32(len(shader_stages))

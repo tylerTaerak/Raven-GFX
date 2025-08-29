@@ -40,7 +40,9 @@ create_worker :: proc(ctx : ^Context, id : int) -> (worker: Worker, ok : bool = 
 }
 
 handle_graphics_job :: proc(ctx : ^Context, job : Graphics_Job, command_buffer : vk.CommandBuffer) {
-    vk.CmdDrawIndexedIndirect(command_buffer, ctx.data.draw_commands[ctx.frame_idx].buf, 0, 0, 0)
+    desc_set := ctx.descriptor_sets[ctx.frame_idx]
+    vk.CmdBindDescriptorSets(command_buffer, .GRAPHICS, job.pipeline.layout, 0, 1, &desc_set, 0, nil)
+    vk.CmdDrawIndexedIndirect(command_buffer, ctx.data[ctx.frame_idx].draw_commands.buf, 0, 0, 0)
 }
 
 handle_compute_job :: proc(ctx : ^Context, job : Compute_Job, command_buffer : vk.CommandBuffer) {
