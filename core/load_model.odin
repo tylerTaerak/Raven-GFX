@@ -1,5 +1,6 @@
 package core
 
+import "core:strings"
 import "core:mem"
 import "core:os"
 import "core:log"
@@ -27,11 +28,11 @@ Descriptor_Type :: enum {
 
 load_models_from_file :: proc(filepath : string) -> (models: []Model_Data) {
     buffer, ok := os.read_entire_file_from_filename(filepath)
-    models = load_models_from_bytes(buffer)
+    models = load_models_from_bytes(buffer, filepath)
     return
 }
 
-load_models_from_bytes :: proc(bytes : []byte) -> (models: []Model_Data) {
+load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []Model_Data) {
     options : cgltf.options
     data, res := cgltf.parse(options, raw_data(bytes), len(bytes))
 
@@ -46,6 +47,12 @@ load_models_from_bytes :: proc(bytes : []byte) -> (models: []Model_Data) {
 
     if res != .success {
         log.error("Validation error in glTF")
+    }
+
+    res = cgltf.load_buffers({}, data, strings.clone_to_cstring(filepath))
+
+    if res != .success {
+        log.error("failed to load buffers")
     }
 
     models_local : [dynamic]Model_Data
@@ -113,6 +120,8 @@ load_models_from_bytes :: proc(bytes : []byte) -> (models: []Model_Data) {
         model : Model_Data
         model.primitives = make([]Primitive_Data, len(primitives))
         copy(model.primitives, primitives[:])
+
+        append(&models_local, model)
     }
 
     models = make([]Model_Data, len(models_local))
@@ -132,9 +141,11 @@ _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
     temp_buffer := make([]byte, acc.buffer_view.buffer.size)
     defer delete(temp_buffer)
     
+    log.infof("copying %d bytes to temp buffer", acc.buffer_view.buffer.size)
+    log.info(len(temp_buffer))
     mem.copy(raw_data(temp_buffer), acc.buffer_view.buffer.data, int(acc.buffer_view.buffer.size))
 
-    view_data := temp_buffer[acc.buffer_view.offset:acc.buffer_view.size]
+    view_data := temp_buffer[acc.buffer_view.offset:acc.buffer_view.offset + acc.buffer_view.size]
 
     acc_data := view_data[acc.offset:]
 
@@ -160,7 +171,7 @@ _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
 
 @(private)
 _convert_bytes_to_u32s :: proc(bytes : []byte) -> (data : []u32) {
-    assert(len(bytes) % 4 != 0)
+    assert(len(bytes) % 4 == 0)
     data = make([]u32, len(bytes) / 4)
 
     for i in 0..<len(data) {

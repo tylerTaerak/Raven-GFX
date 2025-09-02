@@ -11,7 +11,7 @@ import gfx_core "../core"
 
 FRAMES_IN_FLIGHT :: 3
 
-WORKER_THREAD_COUNT :: 4
+WORKER_THREAD_COUNT :: 1
 
 Context :: struct {
     // init fields
@@ -42,6 +42,7 @@ Context :: struct {
     // asset data
     descriptor_pool     : vk.DescriptorPool,
     descriptor_sets     : [FRAMES_IN_FLIGHT]vk.DescriptorSet,
+    descriptor_layouts  : [FRAMES_IN_FLIGHT]vk.DescriptorSetLayout,
     data                : [FRAMES_IN_FLIGHT]Data,
     pipelines           : [dynamic]Pipeline,
 }
@@ -86,9 +87,13 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
         create_info : vk.SemaphoreCreateInfo
         create_info.sType = .SEMAPHORE_CREATE_INFO
         if vk.CreateSemaphore(ctx.device.logical, &create_info, {}, &ctx.frame_semaphores[i]) != .SUCCESS {
+            log.warn("Error creating frame semaphores")
             ok = false
         }
     }
+
+    log.info("Created frame semaphores")
+    
     queue, _ := find_queue_family_present_support(&ctx)
     cmd_pool_create_info : vk.CommandPoolCreateInfo
     cmd_pool_create_info.sType = .COMMAND_POOL_CREATE_INFO
@@ -96,8 +101,11 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
     cmd_pool_create_info.queueFamilyIndex = queue.family_idx
 
     if vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &ctx.primary_cmd_pool) != .SUCCESS {
+        log.warn("Error creating command pool")
         ok = false
     }
+
+    log.info("Created Command Pool")
 
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
@@ -106,6 +114,8 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
     create_info.level = .PRIMARY
 
     vk.AllocateCommandBuffers(ctx.device.logical, &create_info, &ctx.primary_cmd_buf[0])
+
+    log.info("Allocated Buffers")
 
     sem_type_info : vk.SemaphoreTypeCreateInfo
     sem_type_info.sType = .SEMAPHORE_TYPE_CREATE_INFO
@@ -116,12 +126,28 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
     sem_info.pNext = &sem_type_info
 
     if vk.CreateSemaphore(ctx.device.logical, &sem_info, {}, &ctx.core_timeline) != .SUCCESS {
+        log.warn("Error creating timline semaphore")
         ok = false
     }
 
+    log.info("Created main timeline semaphore")
+
     for i in 0..<WORKER_THREAD_COUNT {
         ctx.workers, ok = create_worker(&ctx, i)
+        if !ok {
+            log.warn("Error starting worker", i)
+        }
     }
+
+    log.info("spun worker threads", ok)
+
+    init_data(&ctx)
+
+    for i in 0..<FRAMES_IN_FLIGHT {
+        ctx.data[i].camera = create_camera(&ctx)
+    }
+
+    initialize_descriptor_sets(&ctx)
 
     return
 }

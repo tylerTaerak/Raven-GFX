@@ -1,30 +1,30 @@
 #version 460
 
-layout(std430, set = 0, binding = 0) buffer position_buffer {
+layout(std430, set = 0, binding = 0) readonly buffer position_buffer {
     vec4 positions[];
 };
 
-layout(std430, set = 0, binding = 1) buffer texcoord_buffer {
+layout(std430, set = 0, binding = 1) readonly buffer texcoord_buffer {
     vec2 uvs[];
 };
 
-layout(std430, set = 0, binding = 2) buffer color_buffer {
+layout(std430, set = 0, binding = 2) readonly buffer color_buffer {
     vec4 colors[];
 };
 
-layout(std430, set = 0, binding = 3) buffer normal_buffer {
+layout(std430, set = 0, binding = 3) readonly buffer normal_buffer {
     vec3 normals[];
 };
 
-layout(std430, set = 0, binding = 4) buffer tangent_buffer {
+layout(std430, set = 0, binding = 4) readonly buffer tangent_buffer {
     vec3 tangents[];
 };
 
-layout(std430, set = 0, binding = 5) buffer instance_buffer {
+layout(std430, set = 0, binding = 5) readonly buffer instance_buffer {
     mat4 model_matrices[];
 };
 
-layout(std140, set = 0, binding = 6) uniform camera {
+layout(std140, set = 0, binding = 6) readonly uniform camera {
     mat4 projection;
     mat4 view;
 };

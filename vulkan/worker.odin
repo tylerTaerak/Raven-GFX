@@ -63,8 +63,11 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
     worker := &ctx.workers[sys_idx]
 
     _init_worker_graphics_data(ctx, worker)
+    log.info("Created worker graphics data for worker", sys_idx)
     _init_worker_compute_data(ctx, worker)
+    log.info("Created compute graphics data for worker", sys_idx)
     _init_worker_transfer_data(ctx, worker)
+    log.info("Created transfer graphics data for worker", sys_idx)
 
     defer vk.FreeCommandBuffers(ctx.device.logical, worker.graphics.command_pool, len(worker.graphics.command_buffers), &worker.graphics.command_buffers[0])
     defer vk.DestroyCommandPool(ctx.device.logical, worker.graphics.command_pool, {})
@@ -75,6 +78,7 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
     defer vk.FreeCommandBuffers(ctx.device.logical, worker.transfer.command_pool, len(worker.transfer.command_buffers), &worker.transfer.command_buffers[0])
     defer vk.DestroyCommandPool(ctx.device.logical, worker.transfer.command_pool, {})
 
+    log.info("Starting loop for worker", sys_idx)
     for !sync.atomic_load(&worker.exit) {
         sync.auto_reset_event_wait(&worker.reset_event)
 
@@ -170,22 +174,32 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
     }
 }
 
-_init_worker_graphics_data :: proc(ctx : ^Context, worker : ^Worker) {
+_init_worker_graphics_data :: proc(ctx : ^Context, worker : ^Worker) -> (ok : bool = true) {
     gfx_queue, _ := find_queue_family_present_support(ctx)
     cmd_pool_create_info : vk.CommandPoolCreateInfo
     cmd_pool_create_info.sType = .COMMAND_POOL_CREATE_INFO
     cmd_pool_create_info.flags = {.RESET_COMMAND_BUFFER}
     cmd_pool_create_info.queueFamilyIndex = gfx_queue.family_idx
 
-    vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.graphics.command_pool)
+    res := vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.graphics.command_pool)
+    if res != .SUCCESS {
+        log.warn("Error creating command pool:", res)
+        ok = false
+    }
 
+    log.info("Command Pool for GFX:", worker.graphics.command_pool)
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
     create_info.commandBufferCount = FRAMES_IN_FLIGHT
     create_info.commandPool = worker.graphics.command_pool
     create_info.level = .SECONDARY
 
-    vk.AllocateCommandBuffers(ctx.device.logical, &create_info, &worker.graphics.command_buffers[0])
+    res = vk.AllocateCommandBuffers(ctx.device.logical, &create_info, &worker.graphics.command_buffers[0])
+
+    if res != .SUCCESS {
+        log.warn("Error allocating command buffer:", res)
+    }
+    return
 }
 
 _init_worker_compute_data :: proc(ctx : ^Context, worker : ^Worker) {
@@ -197,6 +211,7 @@ _init_worker_compute_data :: proc(ctx : ^Context, worker : ^Worker) {
 
     vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.compute.command_pool)
 
+    log.info("Command Pool for CMP:", worker.graphics.command_pool)
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
     create_info.commandBufferCount = FRAMES_IN_FLIGHT
@@ -214,6 +229,7 @@ _init_worker_transfer_data :: proc(ctx : ^Context, worker : ^Worker) {
 
     vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.transfer.command_pool)
 
+    log.info("Command Pool for TRS:", worker.graphics.command_pool)
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
     create_info.commandBufferCount = FRAMES_IN_FLIGHT

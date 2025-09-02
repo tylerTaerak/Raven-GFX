@@ -35,7 +35,7 @@ create_pipeline :: proc(ctx : ^Context, vertex_path, fragment_path : string) -> 
     rasterizer := load_rasterizer()
     multisample := load_multisampling()
     color_blend := load_color_blending()
-    layout := load_pipeline_layout(ctx.device.logical) or_return
+    layout := load_pipeline_layout(ctx) or_return
 
     pipeline := load_pipeline(
         ctx,
@@ -195,15 +195,16 @@ load_color_blending :: proc() -> (create_info : vk.PipelineColorBlendStateCreate
     return
 }
 
-load_pipeline_layout :: proc(device : vk.Device) -> (pipeline : vk.PipelineLayout, ok : bool = true) {
+load_pipeline_layout :: proc(ctx: ^Context) -> (pipeline : vk.PipelineLayout, ok : bool = true) {
+    log.info(ctx.descriptor_layouts)
     create_info : vk.PipelineLayoutCreateInfo
     create_info.sType = .PIPELINE_LAYOUT_CREATE_INFO
-    create_info.setLayoutCount = 0
-    create_info.pSetLayouts = nil
+    create_info.setLayoutCount = FRAMES_IN_FLIGHT 
+    create_info.pSetLayouts = &ctx.descriptor_layouts[0]
     create_info.pushConstantRangeCount = 0
     create_info.pPushConstantRanges = nil
 
-    res := vk.CreatePipelineLayout(device, &create_info, {}, &pipeline)
+    res := vk.CreatePipelineLayout(ctx.device.logical, &create_info, {}, &pipeline)
     if res != .SUCCESS {
         log.error("Error creating pipeline layout:", res)
         ok = false

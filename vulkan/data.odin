@@ -1,27 +1,9 @@
 package game_vulkan
 
 import "core:mem"
+import "core:log"
 import vk "vendor:vulkan"
 import "../core"
-
-// This file contains data types and loading mechanisms for each of these types
-
-
-// Data is a megastruct that contains all data objects for all loaded Vulkan objects
-// See DescriptorSets for how to utilize SSBO's for storing data for everything we
-// load in
-
-/*
-
-    DrawIndexedIndirectCommand :: struct {
-        indexCount:    u32,
-        instanceCount: u32,
-        firstIndex:    u32,
-        vertexOffset:  i32,
-        firstInstance: u32,
-    }
-
-*/
 
 BUFFER_SIZE :: 1_048_576 // 1 MiB
 DEFAULT_INSTANCE_COUNT :: 10
@@ -68,13 +50,14 @@ init_data :: proc(ctx: ^Context) {
     for i in 0..<FRAMES_IN_FLIGHT {
         ctx.data[i].index_buffer = create_buffer(ctx, BUFFER_SIZE, {g_fam^}, {.INDEX_BUFFER})
 
-        for i in core.Descriptor_Type {
-            ctx.data[i].vertex_buffers[i] = create_buffer(ctx, BUFFER_SIZE, {g_fam^})
+        for j in core.Descriptor_Type {
+            ctx.data[i].vertex_buffers[j] = create_buffer(ctx, BUFFER_SIZE, {g_fam^})
         }
 
         ctx.data[i].instance_buffer = create_buffer(ctx, BUFFER_SIZE, {g_fam^})
-    }
 
+        ctx.data[i].draw_commands = create_buffer(ctx, BUFFER_SIZE, {g_fam^})
+    }
 }
 
 initialize_descriptor_sets :: proc(ctx: ^Context) {
@@ -104,8 +87,6 @@ initialize_descriptor_sets :: proc(ctx: ^Context) {
     pool_create_info.pPoolSizes = &pool_sizes[0]
 
     vk.CreateDescriptorPool(ctx.device.logical, &pool_create_info, {}, &ctx.descriptor_pool)
-
-    layouts : [FRAMES_IN_FLIGHT]vk.DescriptorSetLayout
 
     for i in 0..<FRAMES_IN_FLIGHT {
         bindings : []vk.DescriptorSetLayoutBinding = {
@@ -168,14 +149,14 @@ initialize_descriptor_sets :: proc(ctx: ^Context) {
         layout : vk.DescriptorSetLayout
         vk.CreateDescriptorSetLayout(ctx.device.logical, &create_info, {}, &layout)
 
-        layouts[i] = layout
+        ctx.descriptor_layouts[i] = layout
     }
 
     alloc_info : vk.DescriptorSetAllocateInfo
     alloc_info.sType = .DESCRIPTOR_SET_ALLOCATE_INFO
     alloc_info.descriptorPool = ctx.descriptor_pool
     alloc_info.descriptorSetCount = FRAMES_IN_FLIGHT
-    alloc_info.pSetLayouts = &layouts[0]
+    alloc_info.pSetLayouts = &ctx.descriptor_layouts[0]
 
     vk.AllocateDescriptorSets(ctx.device.logical, &alloc_info, &ctx.descriptor_sets[0])
 
@@ -237,7 +218,7 @@ initialize_descriptor_sets :: proc(ctx: ^Context) {
             write_info.dstArrayElement = 0
 
             switch j {
-                case 7:
+                case 6:
                     write_info.descriptorType = .UNIFORM_BUFFER
                 case:
                     write_info.descriptorType = .STORAGE_BUFFER
@@ -332,7 +313,6 @@ commit_draws :: proc(ctx: ^Context) {
             cmd.firstInstance = u32(start_idx)
             cmd.instanceCount = u32(len(prim.instances))
 
-            // these draw commands get cleared out after 
             append(&draw_commands, cmd)
 
             start_idx += len(prim.instances)
@@ -340,7 +320,8 @@ commit_draws :: proc(ctx: ^Context) {
         }
     }
 
-    mem.copy(ctx.data[ctx.frame_idx].instance_buffer.host_data, raw_data(instances), size_of(Instance) * len(instances))
+
+    mem.copy(ctx.data[ctx.frame_idx].instance_buffer.host_data, raw_data(instances), 4 * 4 * 4 * len(instances))
 
     push(&ctx.job_queue, Transfer_Job{
         src_buffer = Raw_Buffer_Slice{
@@ -354,6 +335,8 @@ commit_draws :: proc(ctx: ^Context) {
             size   = vk.DeviceSize(size_of(Instance) * len(instances))
         }
     })
+
+    log.info(len(draw_commands))
 
     mem.copy(ctx.data[ctx.frame_idx].draw_commands.host_data, raw_data(draw_commands), size_of(vk.DrawIndexedIndirectCommand) * len(draw_commands))
 

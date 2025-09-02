@@ -2,6 +2,7 @@ package game_vulkan
 
 import "core:mem"
 import "core:slice"
+import "core:log"
 import vk "vendor:vulkan"
 
 // These buffers are very rudimentary - everything is bytes when it comes to these buffers
@@ -38,7 +39,7 @@ create_buffer :: proc(
     create_info : vk.BufferCreateInfo
     create_info.sType = .BUFFER_CREATE_INFO
     create_info.size = vk.DeviceSize(initial_capacity)
-    create_info.usage = {.STORAGE_BUFFER, .TRANSFER_DST}
+    create_info.usage = usage_flags
     create_info.queueFamilyIndexCount = u32(len(queue_families))
     
     queues := make([]u32, len(queue_families))
@@ -56,6 +57,8 @@ create_buffer :: proc(
     
     vk.CreateBuffer(ctx.device.logical, &create_info, {}, &buf.buf)
 
+    buf.size = vk.DeviceSize(initial_capacity)
+
     mem_req : vk.MemoryRequirements
     vk.GetBufferMemoryRequirements(ctx.device.logical, buf.buf, &mem_req)
 
@@ -69,10 +72,12 @@ create_buffer :: proc(
             buf_mem_idx = i
         }
 
-        if mem_type.propertyFlags & {.HOST_VISIBLE, .HOST_COHERENT} != {.HOST_VISIBLE, .HOST_COHERENT} {
+        if mem_type.propertyFlags & {.HOST_VISIBLE, .HOST_COHERENT} == {.HOST_VISIBLE, .HOST_COHERENT} {
             staging_mem_idx = i
         }
     }
+
+    // log.info("Buffer size:", buf.size)
 
     create_info.usage = {.TRANSFER_SRC}
 
@@ -148,40 +153,14 @@ make_slice_from_slice_and_size_and_offset :: proc(src: ^Buffer_Slice, offset, si
     return
 }
 
-make_slice_typed_from_indices :: proc(buffer : $T/^Typed_Buffer($E), start, end: int) -> (slice : Buffer_Slice) {
-    slice = make_slice_from_indices(&buffer.buffer, start, end)
-    return
-}
-
-make_slice_typed_from_size_and_offset :: proc(buffer: $T/^Typed_Buffer($E), start, count : int) -> (slice : Buffer_Slice) {
-    byte_start := start * buffer.element_size
-    byte_size := count * buffer.element_size
-
-    slice = make_slice_from_size_and_offset(&buffer.buffer, byte_start, byte_size)
-}
-
 make_slice :: proc{
     make_slice_from_indicies,
     make_slice_from_size_and_offset,
     make_slice_from_slice_and_indicies,
     make_slice_from_slice_and_size_and_offset,
-    make_slice_typed_from_indices,
-    make_slice_typed_from_size_and_offset,
 }
 
 /* Write and Copy Ops */
-
-typed_buf_write_single :: proc(ctx: ^Context, buffer: $T/^Typed_Buffer($E), data: E, location: int) {
-    byte_data := mem.any_to_bytes(data)
-    
-    buf_write(ctx, &buffer.buffer, byte_data, location)
-}
-
-typed_buf_write_slice :: proc(ctx: ^Context, buffer: $T/^Typed_Buffer($E), data: []E, location: int) {
-    byte_data := mem.slice_to_bytes(data)
-
-    buf_write(ctx, &buffer.buffer, byte_data, location)
-}
 
 buf_write :: proc(ctx: ^Context, buffer : ^Buffer, data: []byte, location: int) {
     // adds a transfer job to the job queue from staging to main
@@ -208,8 +187,6 @@ buf_write :: proc(ctx: ^Context, buffer : ^Buffer, data: []byte, location: int) 
 }
 
 buffer_write :: proc{
-    typed_buf_write_single,
-    typed_buf_write_slice,
     buf_write,
 }
 
