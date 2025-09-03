@@ -27,12 +27,10 @@ Worker :: struct {
     exit                    : bool
 }
 
-create_worker :: proc(ctx : ^Context, id : int) -> (worker: Worker, ok : bool = true) {
-    worker.alloc = runtime.heap_allocator()
-
+create_worker :: proc(ctx : ^Context, id : int) -> (ok : bool = true) {
     thread_ctx : runtime.Context
     thread_ctx = runtime.default_context()
-    thread_ctx.allocator = worker.alloc
+    thread_ctx.allocator = runtime.heap_allocator()
     thread_ctx.logger = log.create_console_logger()
 
     thread.create_and_start_with_poly_data2(ctx, id, worker_proc, thread_ctx)
@@ -60,7 +58,12 @@ handle_transfer_job :: proc(ctx : ^Context, job : Transfer_Job, command_buffer :
 }
 
 worker_proc :: proc(ctx : ^Context, sys_idx : int) {
-    worker := &ctx.workers[sys_idx]
+    worker : ^Worker = new(Worker)
+    defer free(worker)
+
+    ctx.workers[sys_idx] = worker
+    
+    log.info("worker ptr", rawptr(&ctx.workers[sys_idx].reset_event))
 
     _init_worker_graphics_data(ctx, worker)
     log.info("Created worker graphics data for worker", sys_idx)
@@ -80,15 +83,40 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
 
     log.info("Starting loop for worker", sys_idx)
     for !sync.atomic_load(&worker.exit) {
+        log.info("Waiting on semaphore:", rawptr(&worker.reset_event.sema))
+        log.info("other one:", rawptr(&ctx.workers[sys_idx].reset_event.sema))
         sync.auto_reset_event_wait(&worker.reset_event)
 
-        vk.ResetCommandPool(ctx.device.logical, worker.graphics.command_pool, {})
-        vk.ResetCommandPool(ctx.device.logical, worker.compute.command_pool, {})
-        vk.ResetCommandPool(ctx.device.logical, worker.transfer.command_pool, {})
+        // vk.ResetCommandPool(ctx.device.logical, worker.graphics.command_pool, {})
+        // vk.ResetCommandPool(ctx.device.logical, worker.compute.command_pool, {})
+        // vk.ResetCommandPool(ctx.device.logical, worker.transfer.command_pool, {})
 
         clear(&worker.graphics.submit_infos)
         clear(&worker.compute.submit_infos)
         clear(&worker.transfer.submit_infos)
+
+        inheritance_info : vk.CommandBufferInheritanceInfo
+        inheritance_info.sType = .COMMAND_BUFFER_INHERITANCE_INFO
+        inheritance_info.renderPass = ctx.render_pass
+
+        log.info(ctx.render_pass)
+
+        begin_info : vk.CommandBufferBeginInfo
+        begin_info.sType = .COMMAND_BUFFER_BEGIN_INFO
+        begin_info.flags = {.RENDER_PASS_CONTINUE}
+        begin_info.pInheritanceInfo = &inheritance_info
+
+        bare_begin_info : vk.CommandBufferBeginInfo
+        bare_begin_info.sType = .COMMAND_BUFFER_BEGIN_INFO
+
+        log.info(ctx.frame_idx)
+        vk.BeginCommandBuffer(worker.graphics.command_buffers[ctx.frame_idx], &begin_info)
+        vk.BeginCommandBuffer(worker.compute.command_buffers[ctx.frame_idx], &bare_begin_info)
+        vk.BeginCommandBuffer(worker.transfer.command_buffers[ctx.frame_idx], &bare_begin_info)
+
+        defer vk.EndCommandBuffer(worker.transfer.command_buffers[ctx.frame_idx])
+        defer vk.EndCommandBuffer(worker.compute.command_buffers[ctx.frame_idx])
+        defer vk.EndCommandBuffer(worker.graphics.command_buffers[ctx.frame_idx])
 
         for {
             job : Job
@@ -211,7 +239,7 @@ _init_worker_compute_data :: proc(ctx : ^Context, worker : ^Worker) {
 
     vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.compute.command_pool)
 
-    log.info("Command Pool for CMP:", worker.graphics.command_pool)
+    log.info("Command Pool for CMP:", worker.compute.command_pool)
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
     create_info.commandBufferCount = FRAMES_IN_FLIGHT
@@ -229,7 +257,7 @@ _init_worker_transfer_data :: proc(ctx : ^Context, worker : ^Worker) {
 
     vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.transfer.command_pool)
 
-    log.info("Command Pool for TRS:", worker.graphics.command_pool)
+    log.info("Command Pool for TRS:", worker.transfer.command_pool)
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
     create_info.commandBufferCount = FRAMES_IN_FLIGHT

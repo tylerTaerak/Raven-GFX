@@ -15,7 +15,7 @@ Camera :: struct {
 
 create_camera :: proc(ctx: ^Context) -> (cam : Camera) {
     q_family, _ := find_queue_family_by_type(ctx, {.GRAPHICS, .COMPUTE})
-    cam.data_buffer = create_buffer(ctx, 2 * size_of(matrix[4,4]f32), {q_family^}, {.UNIFORM_BUFFER})
+    cam.data_buffer = create_buffer(ctx, 2 * size_of(matrix[4,4]f32), {q_family^}, {.UNIFORM_BUFFER, .TRANSFER_DST})
     cam.projection = Buffer_Slice{
         buffer = &cam.data_buffer,
         offset = 0,

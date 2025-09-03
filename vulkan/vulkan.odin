@@ -27,7 +27,7 @@ Context :: struct {
     // runtime fields
     frame_idx           : int,
     frame_semaphores    : [FRAMES_IN_FLIGHT]vk.Semaphore,
-    workers             : [WORKER_THREAD_COUNT]Worker,
+    workers             : [WORKER_THREAD_COUNT]^Worker,
     wait_group          : sync.Wait_Group,
 
     job_queue           : Job_Queue,
@@ -37,7 +37,6 @@ Context :: struct {
     last_timeline_val   : [FRAMES_IN_FLIGHT]u64,
     current_timeline_val: u64,
     delete_buffers      : [dynamic]Buffer,
-
 
     // asset data
     descriptor_pool     : vk.DescriptorPool,
@@ -133,7 +132,7 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
     log.info("Created main timeline semaphore")
 
     for i in 0..<WORKER_THREAD_COUNT {
-        ctx.workers, ok = create_worker(&ctx, i)
+        ok = create_worker(&ctx, i)
         if !ok {
             log.warn("Error starting worker", i)
         }
@@ -166,15 +165,15 @@ run_frame :: proc(ctx : ^Context) {
         })
     }
 
-    last_frame_value := ctx.last_timeline_val[ctx.frame_idx]
-
     wait_info : vk.SemaphoreWaitInfo
     wait_info.sType = .SEMAPHORE_WAIT_INFO
     wait_info.semaphoreCount = 1
     wait_info.pSemaphores = &ctx.core_timeline
-    wait_info.pValues = &last_frame_value
+    wait_info.pValues = &ctx.last_timeline_val[ctx.frame_idx]
 
-    vk.WaitSemaphores(ctx.device.logical, &wait_info, 15_000_000)
+    vk.WaitSemaphoresKHR(ctx.device.logical, &wait_info, 15_000_000)
+
+    log.info("Starting Frame")
 
     for i in 0..<len(ctx.delete_buffers) {
         _destroy_buffer(ctx, ctx.delete_buffers[i])
@@ -205,6 +204,8 @@ run_frame :: proc(ctx : ^Context) {
 
     vk.CmdBeginRenderPass(ctx.primary_cmd_buf[ctx.frame_idx], &pass_info, .INLINE_AND_SECONDARY_COMMAND_BUFFERS_KHR)
 
+    log.info("Started Render Pass", ctx.render_pass)
+
     // copy out the job queue from the context and create a new one for it
     jobs : Job_Queue
     {
@@ -218,15 +219,20 @@ run_frame :: proc(ctx : ^Context) {
     job_count := q_len(&jobs)
 
     for &worker,i in ctx.workers {
-        worker.jobs = &jobs
+        if worker != nil do worker.jobs = &jobs
     }
 
     // start frame processes for worker threads and do some simple things before waiting
     sync.wait_group_add(&ctx.wait_group, len(ctx.workers))
 
-    for &worker in ctx.workers {
-        sync.auto_reset_event_signal(&worker.reset_event)
+    for i in 0..<len(ctx.workers) {
+        if ctx.workers[i] != nil {
+            log.info("Pointer to semaphore:", rawptr(&ctx.workers[i].reset_event.sema))
+            sync.auto_reset_event_signal(&ctx.workers[i].reset_event)
+        }
     }
+
+    log.info("signal now", ctx.workers[0].reset_event.status)
 
     gfx_fam, ok_gfx := find_queue_family_by_type(ctx, {.GRAPHICS})
     prs_fam, ok_prs := find_queue_family_present_support(ctx)
@@ -236,15 +242,18 @@ run_frame :: proc(ctx : ^Context) {
     vk.GetDeviceQueue(ctx.device.logical, gfx_fam.family_idx, 0, &gfx_q)
     vk.GetDeviceQueue(ctx.device.logical, prs_fam.family_idx, 0, &prs_q)
 
+    log.info("Waiting for worker threads")
+    // wait for worker threads
+    sync.wait_group_wait(&ctx.wait_group)
+
     buffers : [dynamic]vk.CommandBuffer
     defer delete(buffers)
 
     for &worker in ctx.workers {
-        append(&buffers, worker.graphics.command_buffers[ctx.frame_idx])
+        if worker != nil {
+            append(&buffers, worker.graphics.command_buffers[ctx.frame_idx])
+        }
     }
-
-    // wait for worker threads
-    sync.wait_group_wait(&ctx.wait_group)
 
     vk.CmdExecuteCommands(ctx.primary_cmd_buf[ctx.frame_idx], u32(len(buffers)), &buffers[0])
 
@@ -260,30 +269,32 @@ run_frame :: proc(ctx : ^Context) {
     highest_value       : u64
 
     for &worker in ctx.workers {
-        append(&submit_infos, ..worker.graphics.submit_infos[:])
+        if worker != nil {
+            append(&submit_infos, ..worker.graphics.submit_infos[:])
 
-        for &info in worker.graphics.submit_infos {
-            for i in 0..<info.signalSemaphoreInfoCount {
-                if highest_value < info.pSignalSemaphoreInfos[i].value {
-                    highest_value = info.pSignalSemaphoreInfos[i].value
-                }
+            for &info in worker.graphics.submit_infos {
+                for i in 0..<info.signalSemaphoreInfoCount {
+                    if highest_value < info.pSignalSemaphoreInfos[i].value {
+                        highest_value = info.pSignalSemaphoreInfos[i].value
+                    }
 
-                append(&final_wait_infos, info.pSignalSemaphoreInfos[i])
-            }
-        }
-
-        for &info in worker.compute.submit_infos {
-            for i in 0..<info.signalSemaphoreInfoCount {
-                if highest_value < info.pSignalSemaphoreInfos[i].value {
-                    highest_value = info.pSignalSemaphoreInfos[i].value
+                    append(&final_wait_infos, info.pSignalSemaphoreInfos[i])
                 }
             }
-        }
 
-        for &info in worker.transfer.submit_infos {
-            for i in 0..<info.signalSemaphoreInfoCount {
-                if highest_value < info.pSignalSemaphoreInfos[i].value {
-                    highest_value = info.pSignalSemaphoreInfos[i].value
+            for &info in worker.compute.submit_infos {
+                for i in 0..<info.signalSemaphoreInfoCount {
+                    if highest_value < info.pSignalSemaphoreInfos[i].value {
+                        highest_value = info.pSignalSemaphoreInfos[i].value
+                    }
+                }
+            }
+
+            for &info in worker.transfer.submit_infos {
+                for i in 0..<info.signalSemaphoreInfoCount {
+                    if highest_value < info.pSignalSemaphoreInfos[i].value {
+                        highest_value = info.pSignalSemaphoreInfos[i].value
+                    }
                 }
             }
         }
