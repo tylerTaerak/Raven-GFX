@@ -24,18 +24,15 @@ _validate_device :: proc(device : vk.PhysicalDevice, extension_names : []string)
     extensions := make([]vk.ExtensionProperties, ext_count)
     vk.EnumerateDeviceExtensionProperties(device, nil, &ext_count, &extensions[0])
 
-    for &ext in extensions {
-        found : bool
-        for name in extension_names {
-            if name == strings.clone_from_bytes(ext.extensionName[:]) {
-                found = true
-                break
+    outer: for name in extension_names {
+        for &ext in extensions {
+            if name == strings.trim_right_null(string(ext.extensionName[:])) {
+                continue outer
             }
         }
 
-        if !found {
-            return false
-        }
+        // if the loop makes it to this point, the device didn't find an extension
+        return false
     }
 
     return true
@@ -58,6 +55,9 @@ pick_physical_device :: proc(ctx : ^Context) -> (ok : bool) {
     ctx.device.physical = devices[0]
     for d in devices {
         if _validate_device(d, REQUIRED_DEVICE_EXTENSIONS) {
+            props : vk.PhysicalDeviceProperties
+            vk.GetPhysicalDeviceProperties(d, &props)
+            log.info("Selecting device", string(props.deviceName[:]), "for rendering")
             ctx.device.physical = d
             break
         }
