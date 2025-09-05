@@ -1,5 +1,6 @@
 package game_vulkan
 
+import "core:math"
 import "core:container/queue"
 import "core:flags"
 import "core:sync"
@@ -34,8 +35,7 @@ Context :: struct {
     copy_queue_mutex    : sync.Mutex,
 
     core_timeline       : vk.Semaphore,
-    last_timeline_val   : [FRAMES_IN_FLIGHT]u64,
-    current_timeline_val: u64,
+    last_timeline_val   : u64,
     delete_buffers      : [dynamic]Buffer,
 
     // asset data
@@ -46,39 +46,40 @@ Context :: struct {
     pipelines           : [dynamic]Pipeline,
 }
 
-create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = true) {
+create_context :: proc(window : gfx_core.Window) -> (ctx : ^Context, ok : bool = true) {
+    ctx = new(Context)
     // first off, load our Vulkan procedures
     vk_instance_proc_addr := sdl.Vulkan_GetVkGetInstanceProcAddr()
 
     vk.load_proc_addresses(rawptr(vk_instance_proc_addr))
 
-    create_vulkan_instance(&ctx) or_return
+    create_vulkan_instance(ctx) or_return
     vk.load_proc_addresses_instance(ctx.instance)
 
-    if ODIN_DEBUG do create_debug_messenger(&ctx) or_return
+    if ODIN_DEBUG do create_debug_messenger(ctx) or_return
 
-    pick_physical_device(&ctx) or_return
-    create_window_surface(&ctx, window.window_ptr) or_return
+    pick_physical_device(ctx) or_return
+    create_window_surface(ctx, window.window_ptr) or_return
 
     log.info("Created window surface")
 
-    create_queue_family_properties(&ctx) or_return
+    create_queue_family_properties(ctx) or_return
 
     log.info("Created queue family properties")
 
-    create_logical_device(&ctx, {.GRAPHICS, .COMPUTE, .TRANSFER}) or_return // just assume these queue types
+    create_logical_device(ctx, {.GRAPHICS, .COMPUTE, .TRANSFER}) or_return // just assume these queue types
     log.info("Created logical device")
 
-    swapchain_support, _ := get_swapchain_support(&ctx)
-    create_swapchain(&ctx, swapchain_support) or_return
+    swapchain_support, _ := get_swapchain_support(ctx)
+    create_swapchain(ctx, swapchain_support) or_return
 
     log.info("Created swapchain")
 
-    create_render_pass(&ctx) or_return
+    create_render_pass(ctx) or_return
 
     log.info("Created render pass")
 
-    create_framebuffers(&ctx) or_return
+    create_framebuffers(ctx) or_return
 
     log.info("Created framebuffers")
 
@@ -93,7 +94,8 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
 
     log.info("Created frame semaphores")
     
-    queue, _ := find_queue_family_present_support(&ctx)
+    queue, _ := find_queue_family_by_type(ctx, {.GRAPHICS})
+    log.info("Creating Command Pool from Q Fam:", queue.family_idx)
     cmd_pool_create_info : vk.CommandPoolCreateInfo
     cmd_pool_create_info.sType = .COMMAND_POOL_CREATE_INFO
     cmd_pool_create_info.flags = {.RESET_COMMAND_BUFFER}
@@ -132,27 +134,31 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : Context, ok : bool = 
     log.info("Created main timeline semaphore")
 
     for i in 0..<WORKER_THREAD_COUNT {
-        ok = create_worker(&ctx, i)
+        ctx.workers[i], ok = create_worker_thread(ctx)
+        ctx.workers[i].vk_context = ctx
         if !ok {
             log.warn("Error starting worker", i)
         }
+
+        thread.start(ctx.workers[i].thread)
     }
 
     log.info("spun worker threads", ok)
 
-    init_data(&ctx)
+    init_data(ctx)
 
     for i in 0..<FRAMES_IN_FLIGHT {
-        ctx.data[i].camera = create_camera(&ctx)
+        ctx.data[i].camera = create_camera(ctx)
     }
 
-    initialize_descriptor_sets(&ctx)
+    initialize_descriptor_sets(ctx)
 
     return
 }
 
 run_frame :: proc(ctx : ^Context) {
     img_idx : u32
+    // this is a semaphore to signal... not to wait
     vk.AcquireNextImageKHR(ctx.device.logical, ctx.swapchain.chain, 15_000_000, ctx.frame_semaphores[ctx.frame_idx], 0, &img_idx)
 
     // commit all of our draw commands for this frame
@@ -169,7 +175,7 @@ run_frame :: proc(ctx : ^Context) {
     wait_info.sType = .SEMAPHORE_WAIT_INFO
     wait_info.semaphoreCount = 1
     wait_info.pSemaphores = &ctx.core_timeline
-    wait_info.pValues = &ctx.last_timeline_val[ctx.frame_idx]
+    wait_info.pValues = &ctx.last_timeline_val
 
     vk.WaitSemaphoresKHR(ctx.device.logical, &wait_info, 15_000_000)
 
@@ -180,8 +186,6 @@ run_frame :: proc(ctx : ^Context) {
     }
 
     clear(&ctx.delete_buffers)
-
-    ctx.current_timeline_val += 1
 
     // It seems like I can have multiple render passes that handle different areas of the framebuffer
     pass_info : vk.RenderPassBeginInfo
@@ -206,6 +210,8 @@ run_frame :: proc(ctx : ^Context) {
 
     log.info("Started Render Pass", ctx.render_pass)
 
+    log.info("Primary buffer:", ctx.primary_cmd_buf[ctx.frame_idx])
+
     // copy out the job queue from the context and create a new one for it
     jobs : Job_Queue
     {
@@ -219,23 +225,27 @@ run_frame :: proc(ctx : ^Context) {
     job_count := q_len(&jobs)
 
     for &worker,i in ctx.workers {
-        if worker != nil do worker.jobs = &jobs
+        if worker != nil {
+            worker.jobs = &jobs
+        }
     }
+
+    log.info("Main Ctx Ptr:", rawptr(ctx))
 
     // start frame processes for worker threads and do some simple things before waiting
     sync.wait_group_add(&ctx.wait_group, len(ctx.workers))
 
     for i in 0..<len(ctx.workers) {
         if ctx.workers[i] != nil {
-            log.info("Pointer to semaphore:", rawptr(&ctx.workers[i].reset_event.sema))
             sync.auto_reset_event_signal(&ctx.workers[i].reset_event)
         }
     }
 
-    log.info("signal now", ctx.workers[0].reset_event.status)
-
     gfx_fam, ok_gfx := find_queue_family_by_type(ctx, {.GRAPHICS})
     prs_fam, ok_prs := find_queue_family_present_support(ctx)
+
+    log.info("Graphics Queue:", gfx_fam.family_idx)
+    log.info("Present Queue:", prs_fam.family_idx)
 
     gfx_q, prs_q : vk.Queue
 
@@ -251,7 +261,7 @@ run_frame :: proc(ctx : ^Context) {
 
     for &worker in ctx.workers {
         if worker != nil {
-            append(&buffers, worker.graphics.command_buffers[ctx.frame_idx])
+            append(&buffers, worker.gfx_buffers[ctx.frame_idx])
         }
     }
 
@@ -266,63 +276,53 @@ run_frame :: proc(ctx : ^Context) {
     final_wait_infos    : [dynamic]vk.SemaphoreSubmitInfo
     defer delete(final_wait_infos)
 
-    highest_value       : u64
+    highest_value : u64 = ctx.last_timeline_val
 
     for &worker in ctx.workers {
         if worker != nil {
-            append(&submit_infos, ..worker.graphics.submit_infos[:])
+            append(&submit_infos, ..worker.gfx_submissions[:])
 
-            for &info in worker.graphics.submit_infos {
+            for &info in worker.gfx_submissions {
                 for i in 0..<info.signalSemaphoreInfoCount {
-                    if highest_value < info.pSignalSemaphoreInfos[i].value {
-                        highest_value = info.pSignalSemaphoreInfos[i].value
-                    }
-
                     append(&final_wait_infos, info.pSignalSemaphoreInfos[i])
                 }
             }
 
-            for &info in worker.compute.submit_infos {
-                for i in 0..<info.signalSemaphoreInfoCount {
-                    if highest_value < info.pSignalSemaphoreInfos[i].value {
-                        highest_value = info.pSignalSemaphoreInfos[i].value
-                    }
-                }
-            }
+            log.info("Worker's Highest Timeline", worker.highest_timeline)
 
-            for &info in worker.transfer.submit_infos {
-                for i in 0..<info.signalSemaphoreInfoCount {
-                    if highest_value < info.pSignalSemaphoreInfos[i].value {
-                        highest_value = info.pSignalSemaphoreInfos[i].value
-                    }
-                }
+            if worker.highest_timeline > highest_value {
+                highest_value = worker.highest_timeline
             }
         }
+
     }
+
+    // frame_wait_info : vk.SemaphoreSubmitInfo
+    // frame_wait_info.sType = .SEMAPHORE_SUBMIT_INFO
+    // frame_wait_info.semaphore = ctx.frame_semaphores[ctx.frame_idx]
+
+    // append(&final_wait_infos, frame_wait_info)
 
     frame_signal_info : vk.SemaphoreSubmitInfo
     frame_signal_info.sType = .SEMAPHORE_SUBMIT_INFO
     frame_signal_info.value = highest_value + 1
     frame_signal_info.semaphore = ctx.core_timeline
 
-    present_signal_info : vk.SemaphoreSubmitInfo
-    present_signal_info.sType = .SEMAPHORE_SUBMIT_INFO
-    present_signal_info.semaphore = ctx.frame_semaphores[ctx.frame_idx]
-
-    signal_sems := []vk.SemaphoreSubmitInfo{frame_signal_info, present_signal_info}
-
     final_submit_info : vk.SubmitInfo2
     final_submit_info.sType = .SUBMIT_INFO_2
     final_submit_info.waitSemaphoreInfoCount = u32(len(final_wait_infos))
     final_submit_info.pWaitSemaphoreInfos = &final_wait_infos[0]
-    final_submit_info.signalSemaphoreInfoCount = u32(len(signal_sems))
-    final_submit_info.pSignalSemaphoreInfos = &signal_sems[0]
+    final_submit_info.signalSemaphoreInfoCount = 1
+    final_submit_info.pSignalSemaphoreInfos = &frame_signal_info
 
     append(&submit_infos, final_submit_info)
 
-    vk.QueueSubmit2(gfx_q, u32(len(submit_infos)), &submit_infos[0], 0)
+    log.info("Main Thread Submit")
+    vk.QueueSubmit2KHR(gfx_q, u32(len(submit_infos)), &submit_infos[0], 0)
 
-    ctx.last_timeline_val[ctx.frame_idx] = highest_value + 1
+    ctx.last_timeline_val = highest_value + 1
+
+    log.info("Setting Last Frame Value At", ctx.last_timeline_val)
 
     present_info : vk.PresentInfoKHR
     present_info.sType = .PRESENT_INFO_KHR
@@ -332,6 +332,7 @@ run_frame :: proc(ctx : ^Context) {
     present_info.pSwapchains = &ctx.swapchain.chain
     present_info.pImageIndices = &img_idx
 
+    log.info("Main Thread Present")
     vk.QueuePresentKHR(prs_q, &present_info)
 
     ctx.frame_idx = (ctx.frame_idx + 1) % FRAMES_IN_FLIGHT
@@ -364,4 +365,6 @@ destroy_context :: proc(ctx : ^Context) {
     vk.DestroySurfaceKHR(ctx.instance, ctx.window_surface, {})
     if ODIN_DEBUG do vk.DestroyDebugUtilsMessengerEXT(ctx.instance, ctx.debug_messenger, {})
     vk.DestroyInstance(ctx.instance, {})
+
+    free(ctx)
 }

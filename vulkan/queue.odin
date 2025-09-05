@@ -32,6 +32,9 @@ create_queue_family_properties :: proc(ctx : ^Context) -> (ok : bool = true) {
         ctx.device.queue_families[idx].queue_count = fam.queueCount
         ctx.device.queue_families[idx].family_types = fam.queueFlags
 
+        log.info("Queue Family", idx, "has flags", fam.queueFlags)
+
+
         vk.GetPhysicalDeviceSurfaceSupportKHR(ctx.device.physical, u32(idx), ctx.window_surface, &ctx.device.queue_families[idx].surface_support)
     }
 
@@ -40,14 +43,13 @@ create_queue_family_properties :: proc(ctx : ^Context) -> (ok : bool = true) {
 
 find_queue_family_by_type :: proc(ctx : ^Context, types : QueueTypes) -> (fam : ^QueueFamily, ok : bool = false) {
     for &family in ctx.device.queue_families {
-        for type in types {
-            if !(type in family.family_types) {
-                continue
-            }
+        if types & family.family_types == types {
+            log.info("Found queue family", family, "for types", types)
+            fam = &family
+            ok = true
+            return
         }
 
-        fam = &family
-        ok = true
     }
 
     return

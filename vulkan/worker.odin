@@ -9,44 +9,44 @@ import "core:slice"
 
 import "base:runtime"
 
-Worker_Data :: struct {
-    command_pool    : vk.CommandPool,
-    command_buffers : [FRAMES_IN_FLIGHT]vk.CommandBuffer,
-    submit_infos    : [dynamic]vk.SubmitInfo2
-}
-
 Worker :: struct {
     thread                  : ^thread.Thread,
-    frame_index             : int,
-    graphics                : Worker_Data,
-    compute                 : Worker_Data,
-    transfer                : Worker_Data,
+    vk_context              : ^Context,
     jobs                    : ^Job_Queue,
     reset_event             : sync.Auto_Reset_Event,
-    alloc                   : runtime.Allocator,
+    gfx_buffers             : [FRAMES_IN_FLIGHT]vk.CommandBuffer,
+    gfx_submissions         : [dynamic]vk.SubmitInfo2,
+    highest_timeline        : u64,
     exit                    : bool
 }
 
-create_worker :: proc(ctx : ^Context, id : int) -> (ok : bool = true) {
+create_worker_thread :: proc(ctx: ^Context) -> (worker: ^Worker, ok : bool = true) {
     thread_ctx : runtime.Context
     thread_ctx = runtime.default_context()
     thread_ctx.allocator = runtime.heap_allocator()
     thread_ctx.logger = log.create_console_logger()
 
-    thread.create_and_start_with_poly_data2(ctx, id, worker_proc, thread_ctx)
+    worker = new(Worker, thread_ctx.allocator)
+    worker.thread = thread.create(worker_proc)
+    worker.thread.init_context = thread_ctx
+    worker.thread.creation_allocator = runtime.heap_allocator()
+    worker.thread.user_args[0] = rawptr(worker)
+    worker.thread.user_args[1] = rawptr(ctx)
     return
 }
 
-handle_graphics_job :: proc(ctx : ^Context, job : Graphics_Job, command_buffer : vk.CommandBuffer) {
-    desc_set := ctx.descriptor_sets[ctx.frame_idx]
+handle_graphics_job :: proc(worker: ^Worker, job : Graphics_Job, command_buffer : vk.CommandBuffer) {
+    desc_set := worker.vk_context.descriptor_sets[worker.vk_context.frame_idx]
+    vk.CmdBindPipeline(command_buffer, .GRAPHICS, job.pipeline.data)
+    vk.CmdBindIndexBuffer(command_buffer, worker.vk_context.data[worker.vk_context.frame_idx].index_buffer.buf, 0, .UINT32)
     vk.CmdBindDescriptorSets(command_buffer, .GRAPHICS, job.pipeline.layout, 0, 1, &desc_set, 0, nil)
-    vk.CmdDrawIndexedIndirect(command_buffer, ctx.data[ctx.frame_idx].draw_commands.buf, 0, 0, 0)
+    vk.CmdDrawIndexedIndirect(command_buffer, worker.vk_context.data[worker.vk_context.frame_idx].draw_commands.buf, 0, 0, 0)
 }
 
-handle_compute_job :: proc(ctx : ^Context, job : Compute_Job, command_buffer : vk.CommandBuffer) {
+handle_compute_job :: proc(worker: ^Worker, job : Compute_Job, command_buffer : vk.CommandBuffer) {
 }
 
-handle_transfer_job :: proc(ctx : ^Context, job : Transfer_Job, command_buffer : vk.CommandBuffer) {
+handle_transfer_job :: proc(worker: ^Worker, job : Transfer_Job, command_buffer : vk.CommandBuffer) {
     assert(job.src_buffer.size == job.dest_buffer.size)
 
     copy_info : vk.BufferCopy
@@ -57,49 +57,47 @@ handle_transfer_job :: proc(ctx : ^Context, job : Transfer_Job, command_buffer :
     vk.CmdCopyBuffer(command_buffer, job.src_buffer.buffer, job.dest_buffer.buffer, 1, &copy_info)
 }
 
-worker_proc :: proc(ctx : ^Context, sys_idx : int) {
-    worker : ^Worker = new(Worker)
+worker_proc :: proc(subproc: ^thread.Thread) {
+    worker : ^Worker = cast(^Worker)subproc.user_args[0]
+    worker.vk_context = cast(^Context)subproc.user_args[1]
     defer free(worker)
 
-    ctx.workers[sys_idx] = worker
+    // ctx.workers[sys_idx] = worker
+    // worker.vk_context = ctx
+
+    gfx_pool, gfx_buffers, g_ok := _init_worker_graphics_data(worker)
+    cmp_pool, cmp_buffers, c_ok := _init_worker_compute_data(worker)
+    trs_pool, trs_buffers, t_ok := _init_worker_transfer_data(worker)
+
+    worker.gfx_buffers = gfx_buffers
     
-    log.info("worker ptr", rawptr(&ctx.workers[sys_idx].reset_event))
+    cmp_submissions : [dynamic]vk.SubmitInfo2
+    trs_submissions : [dynamic]vk.SubmitInfo2
 
-    _init_worker_graphics_data(ctx, worker)
-    log.info("Created worker graphics data for worker", sys_idx)
-    _init_worker_compute_data(ctx, worker)
-    log.info("Created compute graphics data for worker", sys_idx)
-    _init_worker_transfer_data(ctx, worker)
-    log.info("Created transfer graphics data for worker", sys_idx)
+    defer vk.FreeCommandBuffers(worker.vk_context.device.logical, gfx_pool, len(gfx_buffers), &gfx_buffers[0])
+    defer vk.DestroyCommandPool(worker.vk_context.device.logical, gfx_pool, {})
 
-    defer vk.FreeCommandBuffers(ctx.device.logical, worker.graphics.command_pool, len(worker.graphics.command_buffers), &worker.graphics.command_buffers[0])
-    defer vk.DestroyCommandPool(ctx.device.logical, worker.graphics.command_pool, {})
+    defer vk.FreeCommandBuffers(worker.vk_context.device.logical, cmp_pool, len(cmp_buffers), &cmp_buffers[0])
+    defer vk.DestroyCommandPool(worker.vk_context.device.logical, cmp_pool, {})
 
-    defer vk.FreeCommandBuffers(ctx.device.logical, worker.compute.command_pool, len(worker.compute.command_buffers), &worker.compute.command_buffers[0])
-    defer vk.DestroyCommandPool(ctx.device.logical, worker.compute.command_pool, {})
+    defer vk.FreeCommandBuffers(worker.vk_context.device.logical, trs_pool, len(trs_buffers), &trs_buffers[0])
+    defer vk.DestroyCommandPool(worker.vk_context.device.logical, trs_pool, {})
 
-    defer vk.FreeCommandBuffers(ctx.device.logical, worker.transfer.command_pool, len(worker.transfer.command_buffers), &worker.transfer.command_buffers[0])
-    defer vk.DestroyCommandPool(ctx.device.logical, worker.transfer.command_pool, {})
-
-    log.info("Starting loop for worker", sys_idx)
     for !sync.atomic_load(&worker.exit) {
-        log.info("Waiting on semaphore:", rawptr(&worker.reset_event.sema))
-        log.info("other one:", rawptr(&ctx.workers[sys_idx].reset_event.sema))
         sync.auto_reset_event_wait(&worker.reset_event)
 
-        // vk.ResetCommandPool(ctx.device.logical, worker.graphics.command_pool, {})
-        // vk.ResetCommandPool(ctx.device.logical, worker.compute.command_pool, {})
-        // vk.ResetCommandPool(ctx.device.logical, worker.transfer.command_pool, {})
 
-        clear(&worker.graphics.submit_infos)
-        clear(&worker.compute.submit_infos)
-        clear(&worker.transfer.submit_infos)
+        vk.ResetCommandPool(worker.vk_context.device.logical, gfx_pool, {})
+        vk.ResetCommandPool(worker.vk_context.device.logical, cmp_pool, {})
+        vk.ResetCommandPool(worker.vk_context.device.logical, trs_pool, {})
+
+        clear(&worker.gfx_submissions)
+        clear(&cmp_submissions)
+        clear(&trs_submissions)
 
         inheritance_info : vk.CommandBufferInheritanceInfo
         inheritance_info.sType = .COMMAND_BUFFER_INHERITANCE_INFO
-        inheritance_info.renderPass = ctx.render_pass
-
-        log.info(ctx.render_pass)
+        inheritance_info.renderPass = worker.vk_context.render_pass
 
         begin_info : vk.CommandBufferBeginInfo
         begin_info.sType = .COMMAND_BUFFER_BEGIN_INFO
@@ -109,20 +107,22 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
         bare_begin_info : vk.CommandBufferBeginInfo
         bare_begin_info.sType = .COMMAND_BUFFER_BEGIN_INFO
 
-        log.info(ctx.frame_idx)
-        vk.BeginCommandBuffer(worker.graphics.command_buffers[ctx.frame_idx], &begin_info)
-        vk.BeginCommandBuffer(worker.compute.command_buffers[ctx.frame_idx], &bare_begin_info)
-        vk.BeginCommandBuffer(worker.transfer.command_buffers[ctx.frame_idx], &bare_begin_info)
-
-        defer vk.EndCommandBuffer(worker.transfer.command_buffers[ctx.frame_idx])
-        defer vk.EndCommandBuffer(worker.compute.command_buffers[ctx.frame_idx])
-        defer vk.EndCommandBuffer(worker.graphics.command_buffers[ctx.frame_idx])
+        log.info(worker.vk_context.frame_idx)
+        vk.BeginCommandBuffer(gfx_buffers[worker.vk_context.frame_idx], &begin_info)
+        vk.BeginCommandBuffer(cmp_buffers[worker.vk_context.frame_idx], &bare_begin_info)
+        vk.BeginCommandBuffer(trs_buffers[worker.vk_context.frame_idx], &bare_begin_info)
 
         for {
             job : Job
             has_job : bool
 
             if job, has_job = pop(worker.jobs); has_job {
+
+                full_timeline_val := 1 + worker.vk_context.last_timeline_val + u64(job.timeline_stage)
+
+                if full_timeline_val > worker.highest_timeline {
+                    worker.highest_timeline = full_timeline_val
+                }
 
                 wait_infos : [dynamic]vk.SemaphoreSubmitInfo
                 defer delete(wait_infos)
@@ -131,10 +131,11 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
 
                 for d in deps {
                     if d in worker.jobs.dependencies {
+                        wait_timeline_val := 1 + worker.vk_context.last_timeline_val + u64(worker.jobs.dependencies[d])
                         append(&wait_infos, vk.SemaphoreSubmitInfo {
                             sType = .SEMAPHORE_SUBMIT_INFO,
-                            semaphore = ctx.core_timeline,
-                            value = u64(worker.jobs.dependencies[d]) + ctx.current_timeline_val
+                            semaphore = worker.vk_context.core_timeline,
+                            value = wait_timeline_val
                         })
                     }
                 }
@@ -150,8 +151,8 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
 
                 signal_semaphore := vk.SemaphoreSubmitInfo{
                     sType=.SEMAPHORE_SUBMIT_INFO,
-                    semaphore=ctx.core_timeline,
-                    value=ctx.current_timeline_val + u64(job.timeline_stage)
+                    semaphore=worker.vk_context.core_timeline,
+                    value=full_timeline_val
                 }
 
                 submit_info.pSignalSemaphoreInfos = &signal_semaphore
@@ -165,19 +166,22 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
                 switch val in job.data {
                     case Graphics_Job:
                         // handle graphics job
-                        handle_graphics_job(ctx, val, worker.graphics.command_buffers[worker.frame_index])
-                        cmd_buffer_submit_info.commandBuffer = ctx.primary_cmd_buf[ctx.frame_idx]
-                        append(&worker.graphics.submit_infos, submit_info)
+                        log.info("Processing graphics job with timeline value", full_timeline_val)
+                        handle_graphics_job(worker, val, gfx_buffers[worker.vk_context.frame_idx])
+                        cmd_buffer_submit_info.commandBuffer = worker.vk_context.primary_cmd_buf[worker.vk_context.frame_idx]
+                        append(&worker.gfx_submissions, submit_info)
                     case Compute_Job:
                         // handle compute job
-                        handle_compute_job(ctx, val, worker.compute.command_buffers[worker.frame_index])
-                        cmd_buffer_submit_info.commandBuffer = worker.compute.command_buffers[ctx.frame_idx]
-                        append(&worker.compute.submit_infos, submit_info)
+                        log.info("Processing compute job with timeline value", full_timeline_val)
+                        handle_compute_job(worker, val, cmp_buffers[worker.vk_context.frame_idx])
+                        cmd_buffer_submit_info.commandBuffer = cmp_buffers[worker.vk_context.frame_idx]
+                        append(&cmp_submissions, submit_info)
                     case Transfer_Job:
                         // handle transfer job
-                        handle_transfer_job(ctx, val, worker.transfer.command_buffers[worker.frame_index])
-                        cmd_buffer_submit_info.commandBuffer = worker.transfer.command_buffers[ctx.frame_idx]
-                        append(&worker.transfer.submit_infos, submit_info)
+                        log.info("Processing transfer job with timeline value", full_timeline_val)
+                        handle_transfer_job(worker, val, trs_buffers[worker.vk_context.frame_idx])
+                        cmd_buffer_submit_info.commandBuffer = trs_buffers[worker.vk_context.frame_idx]
+                        append(&trs_submissions, submit_info)
                 }
 
             } else {
@@ -187,42 +191,61 @@ worker_proc :: proc(ctx : ^Context, sys_idx : int) {
         // submit transfer and compute queues
         // the graphics jobs need to be submitted on the main thread
 
-        compute_queue_fam, _ := find_queue_family_by_type(ctx, {.COMPUTE})
-        transfer_queue_fam, _ := find_queue_family_by_type(ctx, {.TRANSFER})
+        vk.EndCommandBuffer(gfx_buffers[worker.vk_context.frame_idx])
+
+        // signal to main thread that we're done with gramfix
+        sync.wait_group_done(&worker.vk_context.wait_group)
+
+        vk.EndCommandBuffer(cmp_buffers[worker.vk_context.frame_idx])
+        vk.EndCommandBuffer(trs_buffers[worker.vk_context.frame_idx])
+
+        log.info(cmp_buffers[worker.vk_context.frame_idx])
+        log.info(trs_buffers[worker.vk_context.frame_idx])
+
+        compute_queue_fam, _ := find_queue_family_by_type(worker.vk_context, {.COMPUTE})
+        transfer_queue_fam, _ := find_queue_family_by_type(worker.vk_context, {.TRANSFER})
 
         compute_queue, transfer_queue : vk.Queue
 
-        vk.GetDeviceQueue(ctx.device.logical, compute_queue_fam.family_idx, 0, &compute_queue)
-        vk.GetDeviceQueue(ctx.device.logical, transfer_queue_fam.family_idx, 0, &transfer_queue)
+        vk.GetDeviceQueue(worker.vk_context.device.logical, compute_queue_fam.family_idx, 0, &compute_queue)
+        vk.GetDeviceQueue(worker.vk_context.device.logical, transfer_queue_fam.family_idx, 0, &transfer_queue)
+        
+        log.info(vk.QueueSubmit2, vk.QueueSubmit2KHR)
 
-        vk.QueueSubmit2(compute_queue, u32(len(worker.compute.submit_infos)), &worker.compute.submit_infos[0], 0)
-        vk.QueueSubmit2(transfer_queue, u32(len(worker.transfer.submit_infos)), &worker.transfer.submit_infos[0], 0)
+        if len(cmp_submissions) > 0 {
+            vk.QueueSubmit2KHR(compute_queue, u32(len(cmp_submissions)), &cmp_submissions[0], 0)
+        }
 
-        sync.wait_group_done(&ctx.wait_group)
+        if len(trs_submissions) > 0 {
+            log.info("TRS Queue Fam", transfer_queue_fam.family_idx)
+            log.info("Worker Submit")
+            vk.QueueSubmit2KHR(transfer_queue, u32(len(trs_submissions)), &trs_submissions[0], 0)
+        }
+
     }
 }
 
-_init_worker_graphics_data :: proc(ctx : ^Context, worker : ^Worker) -> (ok : bool = true) {
-    gfx_queue, _ := find_queue_family_present_support(ctx)
+_init_worker_graphics_data :: proc(worker : ^Worker) -> (command_pool: vk.CommandPool, buffers: [FRAMES_IN_FLIGHT]vk.CommandBuffer, ok : bool = true) {
+    gfx_queue, _ := find_queue_family_present_support(worker.vk_context)
     cmd_pool_create_info : vk.CommandPoolCreateInfo
     cmd_pool_create_info.sType = .COMMAND_POOL_CREATE_INFO
     cmd_pool_create_info.flags = {.RESET_COMMAND_BUFFER}
     cmd_pool_create_info.queueFamilyIndex = gfx_queue.family_idx
 
-    res := vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.graphics.command_pool)
+    res := vk.CreateCommandPool(worker.vk_context.device.logical, &cmd_pool_create_info, {}, &command_pool)
     if res != .SUCCESS {
         log.warn("Error creating command pool:", res)
         ok = false
     }
 
-    log.info("Command Pool for GFX:", worker.graphics.command_pool)
+    log.info("Command Pool for GFX:", command_pool, "; GFX Queue Fam:", gfx_queue.family_idx)
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
     create_info.commandBufferCount = FRAMES_IN_FLIGHT
-    create_info.commandPool = worker.graphics.command_pool
+    create_info.commandPool = command_pool
     create_info.level = .SECONDARY
 
-    res = vk.AllocateCommandBuffers(ctx.device.logical, &create_info, &worker.graphics.command_buffers[0])
+    res = vk.AllocateCommandBuffers(worker.vk_context.device.logical, &create_info, &buffers[0])
 
     if res != .SUCCESS {
         log.warn("Error allocating command buffer:", res)
@@ -230,38 +253,40 @@ _init_worker_graphics_data :: proc(ctx : ^Context, worker : ^Worker) -> (ok : bo
     return
 }
 
-_init_worker_compute_data :: proc(ctx : ^Context, worker : ^Worker) {
-    cmp_queue, _ := find_queue_family_by_type(ctx, {.COMPUTE})
+_init_worker_compute_data :: proc(worker : ^Worker) -> (command_pool: vk.CommandPool, buffers: [FRAMES_IN_FLIGHT]vk.CommandBuffer, ok: bool = true) {
+    cmp_queue, _ := find_queue_family_by_type(worker.vk_context, {.COMPUTE})
     cmd_pool_create_info : vk.CommandPoolCreateInfo
     cmd_pool_create_info.sType = .COMMAND_POOL_CREATE_INFO
     cmd_pool_create_info.flags = {.RESET_COMMAND_BUFFER}
     cmd_pool_create_info.queueFamilyIndex = cmp_queue.family_idx
 
-    vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.compute.command_pool)
+    vk.CreateCommandPool(worker.vk_context.device.logical, &cmd_pool_create_info, {}, &command_pool)
 
-    log.info("Command Pool for CMP:", worker.compute.command_pool)
+    log.info("Command Pool for CMP:", command_pool)
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
     create_info.commandBufferCount = FRAMES_IN_FLIGHT
-    create_info.commandPool = worker.compute.command_pool
+    create_info.commandPool = command_pool
 
-    vk.AllocateCommandBuffers(ctx.device.logical, &create_info, &worker.compute.command_buffers[0])
+    vk.AllocateCommandBuffers(worker.vk_context.device.logical, &create_info, &buffers[0])
+    return
 }
 
-_init_worker_transfer_data :: proc(ctx : ^Context, worker : ^Worker) {
-    trs_queue, _ := find_queue_family_by_type(ctx, {.TRANSFER})
+_init_worker_transfer_data :: proc(worker : ^Worker) -> (command_pool: vk.CommandPool, buffers: [FRAMES_IN_FLIGHT]vk.CommandBuffer, ok: bool = true) {
+    trs_queue, _ := find_queue_family_by_type(worker.vk_context, {.TRANSFER})
     cmd_pool_create_info : vk.CommandPoolCreateInfo
     cmd_pool_create_info.sType = .COMMAND_POOL_CREATE_INFO
     cmd_pool_create_info.flags = {.RESET_COMMAND_BUFFER}
     cmd_pool_create_info.queueFamilyIndex = trs_queue.family_idx
 
-    vk.CreateCommandPool(ctx.device.logical, &cmd_pool_create_info, {}, &worker.transfer.command_pool)
+    vk.CreateCommandPool(worker.vk_context.device.logical, &cmd_pool_create_info, {}, &command_pool)
 
-    log.info("Command Pool for TRS:", worker.transfer.command_pool)
+    log.info("Command Pool for TRS:", command_pool, "; Queue Fam:", trs_queue.family_idx)
     create_info : vk.CommandBufferAllocateInfo
     create_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
     create_info.commandBufferCount = FRAMES_IN_FLIGHT
-    create_info.commandPool = worker.transfer.command_pool
+    create_info.commandPool = command_pool
 
-    vk.AllocateCommandBuffers(ctx.device.logical, &create_info, &worker.transfer.command_buffers[0])
+    vk.AllocateCommandBuffers(worker.vk_context.device.logical, &create_info, &buffers[0])
+    return
 }

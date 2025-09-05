@@ -34,7 +34,7 @@ create_buffer :: proc(
     ctx: ^Context,
     initial_capacity: int,
     queue_families : []QueueFamily,
-    usage_flags: vk.BufferUsageFlags = {.STORAGE_BUFFER, .TRANSFER_DST}) -> (buf : Buffer) {
+    usage_flags: vk.BufferUsageFlags = {.STORAGE_BUFFER, .TRANSFER_DST, .INDIRECT_BUFFER}) -> (buf : Buffer) {
 
     create_info : vk.BufferCreateInfo
     create_info.sType = .BUFFER_CREATE_INFO

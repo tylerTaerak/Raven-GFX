@@ -9,6 +9,7 @@ REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_SWAPCHAIN_EXTENSION_NAME,
     vk.EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME,
     vk.KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+    vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME
 }
 
 Device :: struct {
@@ -121,8 +122,13 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes) -> (ok : bool)
         required_extensions_cstr[i] = strings.clone_to_cstring(ext)
     }
 
+    sync2_feature : vk.PhysicalDeviceSynchronization2Features
+    sync2_feature.sType = .PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES
+    sync2_feature.synchronization2 = true
+
     timeline_sems_feature : vk.PhysicalDeviceTimelineSemaphoreFeatures
     timeline_sems_feature.sType = .PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES
+    timeline_sems_feature.pNext = &sync2_feature
     timeline_sems_feature.timelineSemaphore = true
 
     nested_buffers_feature : vk.PhysicalDeviceNestedCommandBufferFeaturesEXT
