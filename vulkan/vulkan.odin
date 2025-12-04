@@ -14,6 +14,42 @@ FRAMES_IN_FLIGHT :: 3
 
 WORKER_THREAD_COUNT :: 1
 
+Usage_Flag :: enum {
+    NONE,
+    GRAPHICS,
+    COMPUTE,
+    TRANSFER
+}
+
+Usage_Flags :: bit_set[Usage_Flag]
+
+Timeline :: struct {
+    sem     : vk.Semaphore,
+    value   : u64,
+    mutex   : sync.Mutex
+}
+
+// returns current tick count of timeline
+get_current_ticks :: proc(timeline: ^Timeline) -> u64 {
+    sync.lock(&timeline.mutex)
+    defer sync.unlock(&timeline.mutex)
+
+    return timeline.value
+}
+
+// returns the current tick count of timeline and then increments
+tick :: proc(timeline: ^Timeline) -> u64 {
+    sync.lock(&timeline.mutex)
+    defer sync.unlock(&timeline.mutex)
+
+    val := timeline.value
+    timeline.value += 1
+
+    return val
+}
+
+Buffer_Set :: [FRAMES_IN_FLIGHT]vk.CommandBuffer
+
 Context :: struct {
     // init fields
     instance            : vk.Instance,
@@ -23,27 +59,33 @@ Context :: struct {
     swapchain           : Swapchain,
     render_pass         : vk.RenderPass,
     primary_cmd_pool    : vk.CommandPool,
-    primary_cmd_buf     : [FRAMES_IN_FLIGHT]vk.CommandBuffer,
+    primary_cmd_buf     : Buffer_Set,
+
+    // worker data
+    workers             : [WORKER_THREAD_COUNT]^Worker,
+    secondary_buffers   : [WORKER_THREAD_COUNT]Buffer_Set,
+    wait_group          : sync.Wait_Group,
+    copy_queue_mutex    : sync.Mutex,
+    job_queue           : Job_Queue,
+    delete_buffers      : [dynamic]Buffer,
 
     // runtime fields
     frame_idx           : int,
     frame_semaphores    : [FRAMES_IN_FLIGHT]vk.Semaphore,
-    workers             : [WORKER_THREAD_COUNT]^Worker,
-    wait_group          : sync.Wait_Group,
 
-    job_queue           : Job_Queue,
-    copy_queue_mutex    : sync.Mutex,
-
-    core_timeline       : vk.Semaphore,
-    last_timeline_val   : u64,
-    delete_buffers      : [dynamic]Buffer,
-
-    // asset data
+    // assets and pipelines
     descriptor_pool     : vk.DescriptorPool,
     descriptor_sets     : [FRAMES_IN_FLIGHT]vk.DescriptorSet,
     descriptor_layouts  : [FRAMES_IN_FLIGHT]vk.DescriptorSetLayout,
     data                : [FRAMES_IN_FLIGHT]Data,
     pipelines           : [dynamic]Pipeline,
+
+    // GPU syncronization utilities
+    core_timeline       : vk.Semaphore,
+    last_timeline_val   : u64,
+    gfx_timeline        : Timeline,
+    cmp_timleine        : Timeline,
+    trs_timeline        : Timeline,
 }
 
 create_context :: proc(window : gfx_core.Window) -> (ctx : ^Context, ok : bool = true) {
@@ -135,7 +177,7 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : ^Context, ok : bool =
 
     for i in 0..<WORKER_THREAD_COUNT {
         ctx.workers[i], ok = create_worker_thread(ctx)
-        ctx.workers[i].vk_context = ctx
+        ctx.workers[i].ctx = ctx
         if !ok {
             log.warn("Error starting worker", i)
         }
@@ -224,7 +266,7 @@ run_frame :: proc(ctx : ^Context) {
 
     job_count := q_len(&jobs)
 
-    for &worker,i in ctx.workers {
+    for &worker in ctx.workers {
         if worker != nil {
             worker.jobs = &jobs
         }
@@ -339,8 +381,39 @@ run_frame :: proc(ctx : ^Context) {
 }
 
 destroy_context :: proc(ctx : ^Context) {
+    threads : [dynamic]^thread.Thread
     for &w in ctx.workers {
         sync.atomic_store(&w.exit, true)
+        append(&threads, w.thread)
+        sync.auto_reset_event_signal(&w.reset_event)
+    }
+
+    vk.DestroyRenderPass(ctx.device.logical, ctx.render_pass, {})
+
+    thread.join_multiple(..threads[:])
+
+    delete_data(ctx)
+
+    for i in 0..<FRAMES_IN_FLIGHT {
+        vk.DestroyDescriptorSetLayout(ctx.device.logical, ctx.descriptor_layouts[i], {})
+    }
+
+    vk.FreeDescriptorSets(ctx.device.logical, ctx.descriptor_pool, u32(len(ctx.descriptor_sets)), &ctx.descriptor_sets[0])
+
+    vk.DestroyDescriptorPool(ctx.device.logical, ctx.descriptor_pool, {})
+
+    vk.FreeCommandBuffers(ctx.device.logical, ctx.primary_cmd_pool, u32(len(ctx.primary_cmd_buf)), &ctx.primary_cmd_buf[0])
+    vk.DestroyCommandPool(ctx.device.logical, ctx.primary_cmd_pool, {})
+
+    for i in 0..<FRAMES_IN_FLIGHT {
+        vk.DestroySemaphore(ctx.device.logical, ctx.frame_semaphores[i], {})
+    }
+
+    vk.DestroySemaphore(ctx.device.logical, ctx.core_timeline, {})
+
+    for &p in ctx.pipelines {
+        vk.DestroyPipelineLayout(ctx.device.logical, p.layout, {})
+        vk.DestroyPipeline(ctx.device.logical, p.data, {})
     }
 
     for f in ctx.swapchain.framebuffers {
@@ -353,13 +426,12 @@ destroy_context :: proc(ctx : ^Context) {
     }
     delete(ctx.swapchain.views)
 
-    for i in ctx.swapchain.images {
-        vk.DestroyImage(ctx.device.logical, i, {})
-    }
-    delete(ctx.swapchain.images)
-
     vk.DestroySwapchainKHR(ctx.device.logical, ctx.swapchain.chain, {})
     delete(ctx.swapchain.images)
+
+    for b in ctx.delete_buffers {
+        _destroy_buffer(ctx, b)
+    }
 
     vk.DestroyDevice(ctx.device.logical, {})
     vk.DestroySurfaceKHR(ctx.instance, ctx.window_surface, {})

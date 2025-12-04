@@ -14,7 +14,13 @@ create_pipeline :: proc(ctx : ^Context, vertex_path, fragment_path : string) -> 
     vertex_bin := os.read_entire_file_from_filename(vertex_path) or_return
     fragment_bin := os.read_entire_file_from_filename(fragment_path) or_return
 
-    shaders := load_shaders(ctx.device.logical, vertex_bin, fragment_bin) or_return
+    vertex_mod := _load_shader_module(ctx.device.logical, vertex_bin) or_return
+    fragment_mod := _load_shader_module(ctx.device.logical, fragment_bin) or_return
+
+    defer vk.DestroyShaderModule(ctx.device.logical, vertex_mod, {})
+    defer vk.DestroyShaderModule(ctx.device.logical, fragment_mod, {})
+
+    shaders := load_shaders(ctx.device.logical, vertex_mod, fragment_mod) or_return
 
     viewport : vk.Viewport
     viewport.x = 0.0
@@ -76,21 +82,17 @@ _load_shader_module :: proc(device : vk.Device, binary : []byte) -> (mod : vk.Sh
     return
 }
 
-load_shaders :: proc(device : vk.Device, vertex_bin, fragment_bin : []byte) -> (shaders : []vk.PipelineShaderStageCreateInfo, ok : bool){
-    vert_shader, frag_shader : vk.ShaderModule
-    vert_shader, ok = _load_shader_module(device, vertex_bin)
-    frag_shader, ok = _load_shader_module(device, fragment_bin)
-
+load_shaders :: proc(device : vk.Device, vertex_mod, fragment_mod : vk.ShaderModule) -> (shaders : []vk.PipelineShaderStageCreateInfo, ok : bool = true){
     vertex_stage_info : vk.PipelineShaderStageCreateInfo
     vertex_stage_info.sType = .PIPELINE_SHADER_STAGE_CREATE_INFO
     vertex_stage_info.stage = {.VERTEX}
-    vertex_stage_info.module = vert_shader
+    vertex_stage_info.module = vertex_mod
     vertex_stage_info.pName = "main"
 
     frag_stage_info : vk.PipelineShaderStageCreateInfo
     frag_stage_info.sType = .PIPELINE_SHADER_STAGE_CREATE_INFO
     frag_stage_info.stage = {.FRAGMENT}
-    frag_stage_info.module = frag_shader
+    frag_stage_info.module = fragment_mod
     frag_stage_info.pName = "main"
 
     infos : []vk.PipelineShaderStageCreateInfo = {vertex_stage_info, frag_stage_info}
@@ -98,8 +100,6 @@ load_shaders :: proc(device : vk.Device, vertex_bin, fragment_bin : []byte) -> (
     shaders = make([]vk.PipelineShaderStageCreateInfo, len(infos))
 
     copy_count := copy(shaders, infos)
-
-    log.info(copy_count)
 
     return
 }

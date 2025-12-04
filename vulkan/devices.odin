@@ -9,7 +9,12 @@ REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_SWAPCHAIN_EXTENSION_NAME,
     vk.EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME,
     vk.KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
-    vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME
+    vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+    vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+    vk.KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
+    vk.KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
+    vk.KHR_MULTIVIEW_EXTENSION_NAME,
+    vk.KHR_MAINTENANCE_2_EXTENSION_NAME
 }
 
 Device :: struct {
@@ -122,9 +127,14 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes) -> (ok : bool)
         required_extensions_cstr[i] = strings.clone_to_cstring(ext)
     }
 
+    dynamic_rendering_feature : vk.PhysicalDeviceDynamicRenderingFeatures
+    dynamic_rendering_feature.sType = .PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES
+    dynamic_rendering_feature.dynamicRendering = true
+
     sync2_feature : vk.PhysicalDeviceSynchronization2Features
     sync2_feature.sType = .PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES
     sync2_feature.synchronization2 = true
+    sync2_feature.pNext = &dynamic_rendering_feature
 
     timeline_sems_feature : vk.PhysicalDeviceTimelineSemaphoreFeatures
     timeline_sems_feature.sType = .PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES

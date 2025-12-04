@@ -41,7 +41,7 @@ Data :: struct {
 
     camera              : Camera,
 
-    draw_commands       : Buffer
+    draw_commands       : Buffer,
 }
 
 init_data :: proc(ctx: ^Context) {
@@ -85,6 +85,7 @@ initialize_descriptor_sets :: proc(ctx: ^Context) {
     pool_create_info.maxSets = FRAMES_IN_FLIGHT
     pool_create_info.poolSizeCount = u32(len(pool_sizes))
     pool_create_info.pPoolSizes = &pool_sizes[0]
+    pool_create_info.flags = {.FREE_DESCRIPTOR_SET}
 
     vk.CreateDescriptorPool(ctx.device.logical, &pool_create_info, {}, &ctx.descriptor_pool)
 
@@ -361,8 +362,10 @@ load_material :: proc(ctx: ^Context) -> Material_Handle {
 
 delete_data :: proc(ctx: ^Context) {
     for i in 0..<FRAMES_IN_FLIGHT {
+        destroy_camera(ctx, &ctx.data[i].camera)
         destroy_buffer(ctx, ctx.data[i].instance_buffer)
         destroy_buffer(ctx, ctx.data[i].index_buffer)
+        destroy_buffer(ctx, ctx.data[i].draw_commands)
 
         for t in core.Descriptor_Type {
             destroy_buffer(ctx, ctx.data[i].vertex_buffers[t])
