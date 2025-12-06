@@ -4,7 +4,76 @@ import "core:container/queue"
 import "core:sync"
 import vk "vendor:vulkan"
 
+Resource_Usage :: enum {
+    READ_ONLY,
+    READ_WRITE,
+    WRITE
+}
 
+Raw_Resource :: union {
+    Raw_Buffer_Slice,
+    vk.Image
+}
+
+Job_Handle :: distinct u32
+
+Job_Resource :: struct {
+    usage: Resource_Usage,
+    asset: Raw_Resource
+}
+
+Jobby :: struct {
+    id : Job_Handle,
+    dependencies : [dynamic]Job_Handle,
+    resources : []Job_Resource
+}
+
+Jobby_Queue :: struct {
+    q : queue.Queue(Jobby),
+    mutex : sync.Mutex
+}
+
+push :: proc(q: ^Jobby_Queue, resources: ..Job_Resource) -> Job_Handle {
+    sync.lock(&q.mutex)
+    defer sync.unlock(&q.mutex)
+
+    handle := Job_Handle(q.q.len)
+
+    queue.push_back(&q.q, Jobby{
+        id=handle,
+        dependencies={},
+        resources=resources}
+    )
+
+    return handle
+}
+
+pop :: proc(q: ^Jobby_Queue) -> Jobby {
+    sync.lock(&q.mutex)
+    defer sync.unlock(&q.mutex)
+
+    job := queue.pop_front(&q.q)
+
+    return job
+}
+
+add_dependency :: proc(q: ^Jobby_Queue, jobby, dependant: Job_Handle) {
+    sync.lock(&q.mutex)
+    defer sync.unlock(&q.mutex)
+
+    for i in q.q.offset..<q.q.len {
+        if q.q.data[i].id == jobby {
+            append(&q.q.data[i].dependencies, dependant)
+        }
+    }
+}
+
+// need to manually process dependencies - compute necessary dependencies based on resources required,
+// compute ordering that jobs need to go in - return array of "Final Jobs" - job data that includes semaphore value
+
+
+
+/** =============== OLD STUFF ================ **/
 Graphics_Job :: struct {
     pipeline            : Pipeline,
     data                : []Buffer,
