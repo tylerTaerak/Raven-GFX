@@ -10,6 +10,11 @@ import "core:thread"
 import "core:log"
 import gfx_core "../core"
 
+/**
+  TODO)) A lot of stuff in this Vulkan library could probably be generalized and made at home
+            in the higher-level library that a user will be using directly.
+*/
+
 FRAMES_IN_FLIGHT :: 3
 
 WORKER_THREAD_COUNT :: 1
@@ -57,11 +62,12 @@ Context :: struct {
     window_surface      : vk.SurfaceKHR,
     device              : Device,
     swapchain           : Swapchain,
+
+    // TODO)) With Dynamic Rendering, these can be removed
     render_pass         : vk.RenderPass,
     primary_cmd_pool    : vk.CommandPool,
     primary_cmd_buf     : Buffer_Set,
 
-    // worker data
     workers             : [WORKER_THREAD_COUNT]^Worker,
     secondary_buffers   : [WORKER_THREAD_COUNT]Buffer_Set,
     wait_group          : sync.Wait_Group,
@@ -105,7 +111,7 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : ^Context, ok : bool =
 
     log.info("Created window surface")
 
-    create_queue_family_properties(ctx) or_return
+    populate_queue_family_properties(ctx) or_return
 
     log.info("Created queue family properties")
 

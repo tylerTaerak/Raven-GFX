@@ -237,7 +237,7 @@ load_pipeline :: proc(ctx : ^Context,
     create_info.pDepthStencilState = nil
     create_info.layout = layout
     create_info.subpass = 0
-    create_info.renderPass = ctx.render_pass
+    create_info.renderPass = ctx.render_pass // TODO)) Not needed with dynamic rendering, use pNext to point to PipelineRenderingCreateInfo struct instead
 
     // TODO)) it is possible to create multiple pipelines at once - we can look into this to see if this can be extended
     res := vk.CreateGraphicsPipelines(ctx.device.logical, 0, 1, &create_info, {}, &pipeline)

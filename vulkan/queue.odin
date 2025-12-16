@@ -14,7 +14,7 @@ QueueFamily :: struct {
     surface_support : b32
 }
 
-create_queue_family_properties :: proc(ctx : ^Context) -> (ok : bool = true) {
+populate_queue_family_properties :: proc(ctx : ^Context) -> (ok : bool = true) {
     fam_count : u32
     vk.GetPhysicalDeviceQueueFamilyProperties(ctx.device.physical, &fam_count, nil)
 
