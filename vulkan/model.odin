@@ -1,5 +1,7 @@
 package game_vulkan
 
+// TODO)) This can just be deleted
+
 Vertex :: struct {
     position    : [3]f32,
     uv          : [2]f32,

@@ -4,6 +4,7 @@ import vk "vendor:vulkan"
 
 // use images for render targets, will probably be used for textures down the road
 
+// TODO)) These definitions can go upward to core and be used here
 Image_Format :: enum {
     RGBA8_UNORM, // 4 x 8-bit unsigned normmalized float
     RGBA8_SRGB,         // 4 x 8-bit sRGB
@@ -76,7 +77,7 @@ create_image :: proc(ctx: ^Context, size: [2]u32, format: Image_Format, usage: I
     image_info.queueFamilyIndexCount = 1
     image_info.pQueueFamilyIndices = &queue_fams.family_idx
 
-    res := vk.CreateImage(ctx.device.logical, &image_info, {}, &img.image)
+    res := vk.CreateImage(ctx.device, &image_info, {}, &img.image)
 
     ok = res == .SUCCESS
 
@@ -126,7 +127,7 @@ create_image :: proc(ctx: ^Context, size: [2]u32, format: Image_Format, usage: I
             
     }
 
-    res = vk.CreateImageView(ctx.device.logical, &view_info, {}, &img.view)
+    res = vk.CreateImageView(ctx.device, &view_info, {}, &img.view)
 
     ok = res == .SUCCESS
 

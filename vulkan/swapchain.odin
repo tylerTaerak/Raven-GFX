@@ -5,6 +5,8 @@ import vk "vendor:vulkan"
 
 import "core:log"
 
+// TODO)) Should probably just be called swapchain.odin
+
 SwapchainSupport :: struct {
     capabilities    : vk.SurfaceCapabilitiesKHR,
     formats         : []vk.SurfaceFormatKHR,
@@ -30,23 +32,23 @@ create_window_surface :: proc(ctx : ^Context, window : ^sdl.Window) -> (ok : boo
 get_swapchain_support :: proc(ctx : ^Context) -> (support : SwapchainSupport, ok : bool) {
     ok = true
 
-    res := vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.device.physical, ctx.window_surface, &support.capabilities)
+    res := vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.phys_dev, ctx.window_surface, &support.capabilities)
     if res != .SUCCESS {
         log.error("Error retrieving surface capabilities for swapchain support detection")
         ok = false
     }
 
     format_count : u32
-    vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.device.physical, ctx.window_surface, &format_count, nil)
+    vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.phys_dev, ctx.window_surface, &format_count, nil)
 
     support.formats = make([]vk.SurfaceFormatKHR, format_count)
-    vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.device.physical, ctx.window_surface, &format_count, &support.formats[0])
+    vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.phys_dev, ctx.window_surface, &format_count, &support.formats[0])
 
     pm_count : u32
-    vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.device.physical, ctx.window_surface, &pm_count, nil)
+    vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.phys_dev, ctx.window_surface, &pm_count, nil)
 
     support.present_modes = make([]vk.PresentModeKHR, pm_count)
-    vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.device.physical, ctx.window_surface, &pm_count, &support.present_modes[0])
+    vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.phys_dev, ctx.window_surface, &pm_count, &support.present_modes[0])
 
     if format_count == 0 || pm_count == 0 {
         log.error("Unable to properly retrieve swapchain support details")
@@ -91,10 +93,10 @@ _pick_swap_extent :: proc(sc_support : SwapchainSupport, w, h : u32) -> (extent 
     return
 }
 
-create_swapchain :: proc(ctx : ^Context, support : SwapchainSupport) -> (ok : bool) {
-    ctx.swapchain.format = _pick_swap_surface_format(support)
-    ctx.swapchain.present_mode = _pick_swap_present_mode(support)
-    ctx.swapchain.extent = _pick_swap_extent(support, 500, 500) // TODO)) figure out a way to get window dimensions here
+create_swapchain :: proc(ctx : ^Context, support : SwapchainSupport) -> (chain: Swapchain, ok : bool) {
+    chain.format = _pick_swap_surface_format(support)
+    chain.present_mode = _pick_swap_present_mode(support)
+    chain.extent = _pick_swap_extent(support, 500, 500) // TODO)) figure out a way to get window dimensions here
 
     if support.capabilities.maxImageCount == 0 {
         log.error("No images available for swapchain")
@@ -108,10 +110,10 @@ create_swapchain :: proc(ctx : ^Context, support : SwapchainSupport) -> (ok : bo
 
     create_info : vk.SwapchainCreateInfoKHR
     create_info.sType = .SWAPCHAIN_CREATE_INFO_KHR
-    create_info.imageFormat = ctx.swapchain.format.format
-    create_info.imageColorSpace = ctx.swapchain.format.colorSpace
-    create_info.presentMode = ctx.swapchain.present_mode
-    create_info.imageExtent = ctx.swapchain.extent
+    create_info.imageFormat = chain.format.format
+    create_info.imageColorSpace = chain.format.colorSpace
+    create_info.presentMode = chain.present_mode
+    create_info.imageExtent = chain.extent
     create_info.minImageCount = image_count
     create_info.imageArrayLayers = 1
     create_info.imageUsage = {.COLOR_ATTACHMENT}
@@ -123,24 +125,24 @@ create_swapchain :: proc(ctx : ^Context, support : SwapchainSupport) -> (ok : bo
     create_info.compositeAlpha = {.OPAQUE}
     create_info.clipped = true
 
-    res := vk.CreateSwapchainKHR(ctx.device.logical, &create_info, {}, &ctx.swapchain.chain)
+    res := vk.CreateSwapchainKHR(ctx.device, &create_info, {}, &chain.chain)
     if res != .SUCCESS {
         log.error("Error creating swapchain:", res)
         ok = false
     }
 
     sw_image_count : u32
-    vk.GetSwapchainImagesKHR(ctx.device.logical, ctx.swapchain.chain, &sw_image_count, nil)
+    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &sw_image_count, nil)
 
-    ctx.swapchain.images = make([]vk.Image, sw_image_count)
-    vk.GetSwapchainImagesKHR(ctx.device.logical, ctx.swapchain.chain, &sw_image_count, &ctx.swapchain.images[0])
+    chain.images = make([]vk.Image, sw_image_count)
+    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &sw_image_count, &chain.images[0])
 
     if sw_image_count == 0 {
         log.error("Error retrieving swapchain images")
         ok = false
     }
 
-    ctx.swapchain.views, ok = _create_image_views(ctx.device.logical, ctx.swapchain)
+    chain.views, ok = _create_image_views(ctx.device, chain)
 
     return
 }
@@ -175,63 +177,5 @@ _create_image_views :: proc(device : vk.Device, swapchain : Swapchain) -> (views
         }
     }
     
-    return
-}
-
-create_framebuffers :: proc(ctx : ^Context) -> (ok : bool = true) {
-    ctx.swapchain.framebuffers = make([]vk.Framebuffer, len(ctx.swapchain.views))
-
-    for &img, idx in ctx.swapchain.views {
-        create_info : vk.FramebufferCreateInfo
-        create_info.sType = .FRAMEBUFFER_CREATE_INFO
-        create_info.renderPass = ctx.render_pass
-        create_info.attachmentCount = 1
-        create_info.pAttachments = &img
-        create_info.width = ctx.swapchain.extent.width
-        create_info.height = ctx.swapchain.extent.height
-        create_info.layers = 1
-
-        res := vk.CreateFramebuffer(ctx.device.logical, &create_info, {}, &ctx.swapchain.framebuffers[idx])
-        if res != .SUCCESS {
-            log.error("Error creating framebuffer:", res)
-            ok = false }
-    }
-
-    return
-}
-
-create_render_pass :: proc(ctx : ^Context) -> (ok : bool = true) {
-    attachment_desc : vk.AttachmentDescription
-    attachment_desc.format = ctx.swapchain.format.format
-    attachment_desc.samples = {._1}
-    attachment_desc.loadOp = .CLEAR
-    attachment_desc.storeOp = .STORE
-    attachment_desc.stencilLoadOp = .DONT_CARE
-    attachment_desc.stencilStoreOp = .DONT_CARE  
-    attachment_desc.initialLayout = .UNDEFINED
-    attachment_desc.finalLayout = .PRESENT_SRC_KHR
-
-    attachment_ref : vk.AttachmentReference
-    attachment_ref.attachment = 0
-    attachment_ref.layout = .COLOR_ATTACHMENT_OPTIMAL
-
-    subpass_desc : vk.SubpassDescription
-    subpass_desc.pipelineBindPoint = .GRAPHICS
-    subpass_desc.colorAttachmentCount = 1
-    subpass_desc.pColorAttachments = &attachment_ref
-
-    create_info : vk.RenderPassCreateInfo
-    create_info.sType = .RENDER_PASS_CREATE_INFO
-    create_info.attachmentCount = 1
-    create_info.pAttachments = &attachment_desc
-    create_info.subpassCount = 1
-    create_info.pSubpasses = &subpass_desc
-
-    res := vk.CreateRenderPass(ctx.device.logical, &create_info, {}, &ctx.render_pass)
-    if res != .SUCCESS {
-        log.error ("Failed to create render pass:", res)
-        ok = false
-    }
-
     return
 }

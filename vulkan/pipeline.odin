@@ -10,56 +10,54 @@ Pipeline :: struct {
     layout : vk.PipelineLayout
 }
 
-create_pipeline :: proc(ctx : ^Context, vertex_path, fragment_path : string) -> (ok : bool = true) {
+create_pipeline :: proc(ctx : ^Context, vertex_path, fragment_path : string) -> (pipeline: Pipeline, ok : bool = true) {
     vertex_bin := os.read_entire_file_from_filename(vertex_path) or_return
     fragment_bin := os.read_entire_file_from_filename(fragment_path) or_return
 
-    vertex_mod := _load_shader_module(ctx.device.logical, vertex_bin) or_return
-    fragment_mod := _load_shader_module(ctx.device.logical, fragment_bin) or_return
+    vertex_mod := _load_shader_module(ctx.device, vertex_bin) or_return
+    fragment_mod := _load_shader_module(ctx.device, fragment_bin) or_return
 
-    defer vk.DestroyShaderModule(ctx.device.logical, vertex_mod, {})
-    defer vk.DestroyShaderModule(ctx.device.logical, fragment_mod, {})
+    defer vk.DestroyShaderModule(ctx.device, vertex_mod, {})
+    defer vk.DestroyShaderModule(ctx.device, fragment_mod, {})
 
-    shaders := load_shaders(ctx.device.logical, vertex_mod, fragment_mod) or_return
+    shaders := load_shaders(ctx.device, vertex_mod, fragment_mod) or_return
 
-    viewport : vk.Viewport
-    viewport.x = 0.0
-    viewport.y = 0.0
-    viewport.width = f32(ctx.swapchain.extent.width)
-    viewport.height = f32(ctx.swapchain.extent.height)
-    viewport.minDepth = 0.0
-    viewport.maxDepth = 1.0
+    // viewport : vk.Viewport
+    // viewport.x = 0.0
+    // viewport.y = 0.0
+    // viewport.width = f32(ctx.swapchain.extent.width)
+    // viewport.height = f32(ctx.swapchain.extent.height)
+    // viewport.minDepth = 0.0
+    // viewport.maxDepth = 1.0
 
-    scissor : vk.Rect2D
-    scissor.offset = {0, 0}
-    scissor.extent = ctx.swapchain.extent
+    // scissor : vk.Rect2D
+    // scissor.offset = {0, 0}
+    // scissor.extent = ctx.swapchain.extent
 
     dyn_states := load_dynamic_states({.VIEWPORT, .SCISSOR})
     vertex_input := load_vertex_input()
     input_asm := load_input_assemply()
-    viewport_data := load_viewport(&viewport, &scissor)
+    // viewport_data := load_viewport(&viewport, &scissor)
     rasterizer := load_rasterizer()
     multisample := load_multisampling()
     color_blend := load_color_blending()
     layout := load_pipeline_layout(ctx) or_return
 
-    pipeline := load_pipeline(
+    pl := load_pipeline(
         ctx,
         shaders,
-        nil,
+        &dyn_states,
         &vertex_input,
         &input_asm,
-        &viewport_data,
+        nil,
         &rasterizer,
         &multisample,
         &color_blend,
         layout
     ) or_return
 
-    append(&ctx.pipelines, Pipeline{
-        data = pipeline,
-        layout = layout
-    })
+    pipeline.data = pl
+    pipeline.layout = layout
 
     return
 }
@@ -196,15 +194,14 @@ load_color_blending :: proc() -> (create_info : vk.PipelineColorBlendStateCreate
 }
 
 load_pipeline_layout :: proc(ctx: ^Context) -> (pipeline : vk.PipelineLayout, ok : bool = true) {
-    log.info(ctx.descriptor_layouts)
     create_info : vk.PipelineLayoutCreateInfo
     create_info.sType = .PIPELINE_LAYOUT_CREATE_INFO
-    create_info.setLayoutCount = FRAMES_IN_FLIGHT 
-    create_info.pSetLayouts = &ctx.descriptor_layouts[0]
+    // create_info.setLayoutCount = FRAMES_IN_FLIGHT 
+    // create_info.pSetLayouts = &ctx.descriptor_layouts[0]
     create_info.pushConstantRangeCount = 0
     create_info.pPushConstantRanges = nil
 
-    res := vk.CreatePipelineLayout(ctx.device.logical, &create_info, {}, &pipeline)
+    res := vk.CreatePipelineLayout(ctx.device, &create_info, {}, &pipeline)
     if res != .SUCCESS {
         log.error("Error creating pipeline layout:", res)
         ok = false
@@ -237,10 +234,10 @@ load_pipeline :: proc(ctx : ^Context,
     create_info.pDepthStencilState = nil
     create_info.layout = layout
     create_info.subpass = 0
-    create_info.renderPass = ctx.render_pass // TODO)) Not needed with dynamic rendering, use pNext to point to PipelineRenderingCreateInfo struct instead
+    // TODO)) Not needed with dynamic rendering, use pNext to point to PipelineRenderingCreateInfo struct instead
 
     // TODO)) it is possible to create multiple pipelines at once - we can look into this to see if this can be extended
-    res := vk.CreateGraphicsPipelines(ctx.device.logical, 0, 1, &create_info, {}, &pipeline)
+    res := vk.CreateGraphicsPipelines(ctx.device, 0, 1, &create_info, {}, &pipeline)
     if res != .SUCCESS {
         log.error("Error creating graphics pipeline:", res)
         ok = false

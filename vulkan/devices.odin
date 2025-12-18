@@ -17,12 +17,6 @@ REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_MAINTENANCE_2_EXTENSION_NAME
 }
 
-Device :: struct {
-    physical        : vk.PhysicalDevice,
-    logical         : vk.Device,
-    queue_families  : []QueueFamily
-}
-
 _validate_device :: proc(device : vk.PhysicalDevice, extension_names : []string) -> bool {
     ext_count : u32
     vk.EnumerateDeviceExtensionProperties(device, nil, &ext_count, nil)
@@ -58,13 +52,13 @@ pick_physical_device :: proc(ctx : ^Context) -> (ok : bool) {
         ok = false
     }
 
-    ctx.device.physical = devices[0]
+    ctx.phys_dev = devices[0]
     for d in devices {
         if _validate_device(d, REQUIRED_DEVICE_EXTENSIONS) {
             props : vk.PhysicalDeviceProperties
             vk.GetPhysicalDeviceProperties(d, &props)
             log.info("Selecting device", string(props.deviceName[:]), "for rendering")
-            ctx.device.physical = d
+            ctx.phys_dev = d
             break
         }
     }
@@ -127,6 +121,7 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes) -> (ok : bool)
         required_extensions_cstr[i] = strings.clone_to_cstring(ext)
     }
 
+    // chain the features we need into the device creation
     dynamic_rendering_feature : vk.PhysicalDeviceDynamicRenderingFeatures
     dynamic_rendering_feature.sType = .PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES
     dynamic_rendering_feature.dynamicRendering = true
@@ -152,23 +147,22 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes) -> (ok : bool)
     features.sType = .PHYSICAL_DEVICE_FEATURES_2
     features.pNext = &nested_buffers_feature
 
-
     create_info : vk.DeviceCreateInfo
     create_info.sType = .DEVICE_CREATE_INFO
+    create_info.pNext = &features
+
     create_info.pQueueCreateInfos = &q_create_infos[0]
     create_info.queueCreateInfoCount = u32(len(q_create_infos))
-    create_info.pEnabledFeatures = nil                             // TODO)) specify device features we want to use
-    create_info.pNext = &features
     create_info.enabledExtensionCount = u32(len(required_extensions_cstr))
     create_info.ppEnabledExtensionNames = &required_extensions_cstr[0]
 
-    res := vk.CreateDevice(ctx.device.physical, &create_info, {}, &ctx.device.logical)
+    res := vk.CreateDevice(ctx.phys_dev, &create_info, {}, &ctx.device)
     if res != .SUCCESS {
         log.error("Error creating logical device", res)
         ok = false
     }
 
-    vk.load_proc_addresses_device(ctx.device.logical)
+    vk.load_proc_addresses_device(ctx.device)
 
     return
 }
