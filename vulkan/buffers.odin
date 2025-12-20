@@ -5,19 +5,23 @@ import "core:slice"
 import "core:log"
 import vk "vendor:vulkan"
 
-// These buffers are very rudimentary - everything is bytes when it comes to these buffers
-Buffer :: struct {
+Buffer :: struct ($T: typeid) {
     buf             : vk.Buffer,
     mem             : vk.DeviceMemory,
     size            : vk.DeviceSize,
 
-    staging_buffer  : vk.Buffer,
-    staging_mem     : vk.DeviceMemory,
-    host_data       : rawptr
+    type            : T,
+    count           : int,
+    element_size    : int
 }
 
-Buffer_Slice :: struct {
-    buffer      : ^Buffer,
+Host_Buffer :: struct ($T: typeid) {
+    internal_buffer : Buffer(T),
+    data_ptr        : rawptr
+}
+
+Buffer_Slice :: struct ($T: typeid) {
+    buffer      : ^Buffer(T),
     offset      : vk.DeviceSize,
     size        : vk.DeviceSize
 }
