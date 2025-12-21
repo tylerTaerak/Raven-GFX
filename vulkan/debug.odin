@@ -8,9 +8,9 @@ import "base:runtime"
 
 
 _debug_callback :: proc "c" (severity        : vk.DebugUtilsMessageSeverityFlagsEXT,
-                        type            : vk.DebugUtilsMessageTypeFlagsEXT,
-                        callback_data   : ^vk.DebugUtilsMessengerCallbackDataEXT,
-                        user_data       : rawptr) -> b32 {
+                             type            : vk.DebugUtilsMessageTypeFlagsEXT,
+                             callback_data   : ^vk.DebugUtilsMessengerCallbackDataEXT,
+                             user_data       : rawptr) -> b32 {
     context = runtime.default_context()
     logger := log.create_console_logger()
     logger.options = {.Level, .Terminal_Color}

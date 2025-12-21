@@ -5,6 +5,7 @@ import vk "vendor:vulkan"
 import "core:log"
 import "core:strings"
 
+// TODO)) Have this passed to this code from wrapping library
 REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_SWAPCHAIN_EXTENSION_NAME,
     vk.EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME,
@@ -38,7 +39,7 @@ _validate_device :: proc(device : vk.PhysicalDevice, extension_names : []string)
     return true
 }
 
-pick_physical_device :: proc(ctx : ^Context) -> (ok : bool) {
+pick_physical_device :: proc(ctx : ^Context, vulkan_extensions: []string) -> (ok : bool) {
     ok = true
 
     device_count : u32
@@ -54,7 +55,7 @@ pick_physical_device :: proc(ctx : ^Context) -> (ok : bool) {
 
     ctx.phys_dev = devices[0]
     for d in devices {
-        if _validate_device(d, REQUIRED_DEVICE_EXTENSIONS) {
+        if _validate_device(d, vulkan_extensions) {
             props : vk.PhysicalDeviceProperties
             vk.GetPhysicalDeviceProperties(d, &props)
             log.info("Selecting device", string(props.deviceName[:]), "for rendering")

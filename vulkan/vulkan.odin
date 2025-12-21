@@ -21,7 +21,7 @@ Context :: struct {
     queues              : []QueueFamily
 }
 
-create_context :: proc(window : gfx_core.Window) -> (ctx : ^Context, ok : bool = true) {
+create_context :: proc(window : gfx_core.Window, vulkan_extensions: []string) -> (ctx : ^Context, ok : bool = true) {
     ctx = new(Context)
     // first off, load our Vulkan procedures
     vk_instance_proc_addr := sdl.Vulkan_GetVkGetInstanceProcAddr()
@@ -33,12 +33,12 @@ create_context :: proc(window : gfx_core.Window) -> (ctx : ^Context, ok : bool =
 
     if ODIN_DEBUG do create_debug_messenger(ctx) or_return
 
-    pick_physical_device(ctx) or_return
+    pick_physical_device(ctx, vulkan_extensions) or_return
     create_window_surface(ctx, window.window_ptr) or_return
 
     log.info("Created window surface")
 
-    populate_queue_family_properties(ctx) or_return
+    _populate_queue_family_properties(ctx) or_return
 
     log.info("Created queue family properties")
 

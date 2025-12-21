@@ -26,23 +26,17 @@ Buffer_Slice :: struct ($T: typeid) {
     size        : vk.DeviceSize
 }
 
-Raw_Buffer_Slice :: struct {
-    buffer : vk.Buffer,
-    offset : vk.DeviceSize,
-    size   : vk.DeviceSize
-}
-
-/* Create Buffer */
-
 create_buffer :: proc(
     ctx: ^Context,
-    initial_capacity: int,
+    $T: typeid,
+    element_count: int,
     queue_families : []QueueFamily,
-    usage_flags: vk.BufferUsageFlags = {.STORAGE_BUFFER, .TRANSFER_DST, .INDIRECT_BUFFER}) -> (buf : Buffer) {
+    usage_flags: vk.BufferUsageFlags,
+    memory_flags: vk.MemoryPropertyFlags) -> (buf : Buffer(T)) {
 
     create_info : vk.BufferCreateInfo
     create_info.sType = .BUFFER_CREATE_INFO
-    create_info.size = vk.DeviceSize(initial_capacity)
+    create_info.size = vk.DeviceSize(element_count * size_of(T))
     create_info.usage = usage_flags
     create_info.queueFamilyIndexCount = u32(len(queue_families))
     
@@ -72,23 +66,10 @@ create_buffer :: proc(
     buf_mem_idx, staging_mem_idx : u32
     for i in 0..<mem_props.memoryTypeCount {
         mem_type := mem_props.memoryTypes[i]
-        if .DEVICE_LOCAL in mem_type.propertyFlags {
+        if (mem_type.propertyFlags & memory_flags) == memory_flags {
             buf_mem_idx = i
         }
-
-        if mem_type.propertyFlags & {.HOST_VISIBLE, .HOST_COHERENT} == {.HOST_VISIBLE, .HOST_COHERENT} {
-            staging_mem_idx = i
-        }
     }
-
-    // log.info("Buffer size:", buf.size)
-
-    create_info.usage = {.TRANSFER_SRC}
-
-    vk.CreateBuffer(ctx.device, &create_info, {}, &buf.staging_buffer)
-
-    staging_mem_req : vk.MemoryRequirements
-    vk.GetBufferMemoryRequirements(ctx.device, buf.staging_buffer, &staging_mem_req)
 
     buf_alloc_info : vk.MemoryAllocateInfo
     buf_alloc_info.sType = .MEMORY_ALLOCATE_INFO
@@ -99,24 +80,29 @@ create_buffer :: proc(
 
     vk.BindBufferMemory(ctx.device, buf.buf, buf.mem, 0)
 
-    staging_alloc_info : vk.MemoryAllocateInfo
-    staging_alloc_info.sType = .MEMORY_ALLOCATE_INFO
-    staging_alloc_info.allocationSize = staging_mem_req.size
-    staging_alloc_info.memoryTypeIndex = staging_mem_idx
+    // this is just for staging buffers that need host coherent memory
+    // vk.MapMemory(ctx.device, buf.staging_mem, 0, staging_mem_req.size, {}, &buf.host_data)
 
-    vk.AllocateMemory(ctx.device, &staging_alloc_info, {}, &buf.staging_mem)
+    return
+}
 
-    vk.BindBufferMemory(ctx.device, buf.staging_buffer, buf.staging_mem, 0)
+create_host_buffer :: proc(
+    ctx: ^Context,
+    $T: typeid,
+    element_count: int,
+    queue_families : []QueueFamily,
+    usage_flags: vk.BufferUsageFlags, // this might be able to just be TRANSFER_SRC... we'll see if we need the ability to change this later
+    ) -> (buf: Host_Buffer(T)) {
 
-
-    vk.MapMemory(ctx.device, buf.staging_mem, 0, staging_mem_req.size, {}, &buf.host_data)
-
+    buf.internal_buffer = create_buffer(ctx, T, element_count, queue_families, usage_flags, {.HOST_VISIBLE, .HOST_COHERENT})
+    vk.MapMemory(ctx.device, buf.internal_buffer.mem, 0, buf.internal_buffer.size, {}, &buf.data_ptr)
+    
     return
 }
 
 /* Slice Creation */
 
-make_slice_from_indicies :: proc(buffer: ^Buffer, start, end: int) -> (slice : Buffer_Slice) {
+make_slice_from_indicies :: proc(buffer: ^$T/Buffer($E), start, end: int) -> (slice : Buffer_Slice(E)) {
     assert(end > start)
 
     size := vk.DeviceSize(end - start)
@@ -126,7 +112,7 @@ make_slice_from_indicies :: proc(buffer: ^Buffer, start, end: int) -> (slice : B
     return
 }
 
-make_slice_from_size_and_offset :: proc(buffer: ^Buffer, offset, size: vk.DeviceSize) -> (slice : Buffer_Slice) {
+make_slice_from_size_and_offset :: proc(buffer: ^$T/Buffer($E), offset, size: vk.DeviceSize) -> (slice : Buffer_Slice(E)) {
     assert(size <= buffer.size)
 
     slice.buffer    = buffer
@@ -136,7 +122,7 @@ make_slice_from_size_and_offset :: proc(buffer: ^Buffer, offset, size: vk.Device
     return
 }
 
-make_slice_from_slice_and_indicies :: proc(src: ^Buffer_Slice, start, end: int) -> (slice : Buffer_Slice) {
+make_slice_from_slice_and_indicies :: proc(src: ^$T/Buffer_Slice($E), start, end: int) -> (slice : Buffer_Slice(E)) {
     assert(end > start)
     assert(end < int(src.size))
 
@@ -147,7 +133,7 @@ make_slice_from_slice_and_indicies :: proc(src: ^Buffer_Slice, start, end: int) 
     return
 }
 
-make_slice_from_slice_and_size_and_offset :: proc(src: ^Buffer_Slice, offset, size: vk.DeviceSize) -> (slice : Buffer_Slice) {
+make_slice_from_slice_and_size_and_offset :: proc(src: ^$T/Buffer_Slice($E), offset, size: vk.DeviceSize) -> (slice : Buffer_Slice(E)) {
     assert(offset + size <= src.size)
 
     slice.buffer = src.buffer
@@ -165,53 +151,17 @@ make_slice :: proc{
 }
 
 /* Write and Copy Ops */
+// this part may need to just be the raw "pass a command buffer and record the copy/write commands",
+// and further abstractions should probably be done further up the chain
+//ProcCmdCopyBuffer  :: #type proc "system" (commandBuffer: CommandBuffer, srcBuffer: Buffer, dstBuffer: Buffer, regionCount: u32, pRegions: [^]BufferCopy)
 
-buf_write :: proc(ctx: ^Context, buffer : ^Buffer, data: []byte, location: int) {
-    // adds a transfer job to the job queue from staging to main
-    
-    byte_slice := slice.bytes_from_ptr(buffer.host_data, int(buffer.size))
-    copy(byte_slice[location:location + len(data)], data)
+copy_buffer_data :: proc(command_buf: vk.CommandBuffer, src, dest: ^$T/Buffer_Slice($E)) {
+    assert(src.size == dest.size)
 
-    src_slice := Raw_Buffer_Slice{
-        buffer=buffer.staging_buffer,
-        offset=vk.DeviceSize(location),
-        size=vk.DeviceSize(len(data))
-    }
+    copy_info : vk.BufferCopy
+    copy_info.srcOffset = src.offset
+    copy_info.dstOffset = dest.offset
+    copy_info.size = dest.size
 
-    dest_slice := Raw_Buffer_Slice{
-        buffer=buffer.buf,
-        offset=vk.DeviceSize(location),
-        size=vk.DeviceSize(len(data))
-    }
-}
-
-buffer_write :: proc{
-    buf_write,
-}
-
-buffer_copy :: proc(ctx : ^Context, src, dst : Buffer_Slice) {
-    // adds a transfer job to the job queue
-
-    raw_src := Raw_Buffer_Slice {
-        buffer = src.buffer.buf,
-        offset = src.offset,
-        size = src.size
-    }
-
-    raw_dest := Raw_Buffer_Slice {
-        buffer = dst.buffer.buf,
-        offset = dst.offset,
-        size = dst.size
-    }
-}
-
-/* Cleanup */
-
-destroy_buffer :: proc(ctx : ^Context, buffer : Buffer) {
-    vk.DestroyBuffer(ctx.device, buffer.buf, {})
-    vk.FreeMemory(ctx.device, buffer.mem, {})
-
-    vk.UnmapMemory(ctx.device, buffer.staging_mem)
-    vk.DestroyBuffer(ctx.device, buffer.staging_buffer, {})
-    vk.FreeMemory(ctx.device, buffer.staging_mem, {})
+    vk.CmdCopyBUffer(command_buf, src.buffer.buf, dest.buffer.buf, 1, &copy_info)
 }

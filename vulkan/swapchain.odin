@@ -5,8 +5,6 @@ import vk "vendor:vulkan"
 
 import "core:log"
 
-// TODO)) Should probably just be called swapchain.odin
-
 SwapchainSupport :: struct {
     capabilities    : vk.SurfaceCapabilitiesKHR,
     formats         : []vk.SurfaceFormatKHR,
