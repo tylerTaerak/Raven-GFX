@@ -13,17 +13,9 @@ Model_Data :: struct {
 
 Primitive_Data :: struct {
     indices : []u32,
-    descriptor_data : [Descriptor_Type][]byte,
+    descriptor_data : [Descriptor_Data_Type][]byte,
     vertex_count : u32
     // material data too
-}
-
-Descriptor_Type :: enum {
-    POSITION,
-    TEXCOORD,
-    COLOR,
-    NORMAL,
-    TANGENT
 }
 
 load_models_from_file :: proc(filepath : string) -> (models: []Model_Data) {
@@ -67,7 +59,7 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
 
             vert_idx_data       : []byte
 
-            descriptor_data : [Descriptor_Type][]byte
+            descriptor_data : [Descriptor_Data_Type][]byte
             indices_acc := primitive.indices
 
             {
@@ -86,7 +78,7 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
                 byte_buffer := _make_bytes_from_accessor(accessor)
                 defer delete(byte_buffer)
 
-                core_type : Descriptor_Type
+                core_type : Descriptor_Data_Type
 
                 #partial switch attr.type {
                     case .position:

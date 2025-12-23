@@ -150,11 +150,6 @@ make_slice :: proc{
     make_slice_from_slice_and_size_and_offset,
 }
 
-/* Write and Copy Ops */
-// this part may need to just be the raw "pass a command buffer and record the copy/write commands",
-// and further abstractions should probably be done further up the chain
-//ProcCmdCopyBuffer  :: #type proc "system" (commandBuffer: CommandBuffer, srcBuffer: Buffer, dstBuffer: Buffer, regionCount: u32, pRegions: [^]BufferCopy)
-
 copy_buffer_data :: proc(command_buf: vk.CommandBuffer, src, dest: ^$T/Buffer_Slice($E)) {
     assert(src.size == dest.size)
 
@@ -164,4 +159,13 @@ copy_buffer_data :: proc(command_buf: vk.CommandBuffer, src, dest: ^$T/Buffer_Sl
     copy_info.size = dest.size
 
     vk.CmdCopyBUffer(command_buf, src.buffer.buf, dest.buffer.buf, 1, &copy_info)
+}
+
+destroy_host_buffer :: proc(ctx: ^Context, buffer: $T/Host_Buffer($E)) {
+    destroy_buffer(buffer.internal_buffer)
+}
+
+destroy_buffer :: proc(ctx: ^Context, buffer: $T/Buffer($E)) {
+    vk.FreeMemory(ctx.device, buffer.mem, {})
+    vk.DestroyBuffer(ctx.device, buffer.buf, {})
 }

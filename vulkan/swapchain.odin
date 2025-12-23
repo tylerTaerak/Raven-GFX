@@ -2,6 +2,7 @@ package game_vulkan
 
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
+import "../core"
 
 import "core:log"
 
@@ -12,22 +13,80 @@ SwapchainSupport :: struct {
 }
 
 Swapchain :: struct {
+    surface         : vk.SurfaceKHR,
     chain           : vk.SwapchainKHR,
     images          : []vk.Image,
     views           : []vk.ImageView,
-    framebuffers    : []vk.Framebuffer,
     format          : vk.SurfaceFormatKHR,
     extent          : vk.Extent2D,
     present_mode    : vk.PresentModeKHR
 }
 
-create_window_surface :: proc(ctx : ^Context, window : ^sdl.Window) -> (ok : bool) {
-    ok = sdl.Vulkan_CreateSurface(window, ctx.instance, {}, &ctx.window_surface)
+create_swapchain :: proc(ctx : ^Context, window: ^core.Window) -> (chain: Swapchain, ok : bool) {
+    chain.surface = _create_window_surface(ctx, window.window_ptr) or_return
+
+    support := _get_swapchain_support(ctx) or_return
+
+    chain.format = _pick_swap_surface_format(support)
+    chain.present_mode = _pick_swap_present_mode(support)
+    chain.extent = _pick_swap_extent(support, 500, 500) // TODO)) figure out a way to get window dimensions here
+
+    if support.capabilities.maxImageCount == 0 {
+        log.error("No images available for swapchain")
+        ok = false
+    }
+
+    image_count : u32 = clamp(support.capabilities.minImageCount + 1, support.capabilities.minImageCount, support.capabilities.maxImageCount)
+    // TODO)) I might need to determine whether a graphics queue family is distinct from a family that supports presentKHR
+    supported_family, _ := find_queue_family_present_support(ctx)
+    queue_indices : []u32 = {supported_family.family_idx}
+
+    create_info : vk.SwapchainCreateInfoKHR
+    create_info.sType = .SWAPCHAIN_CREATE_INFO_KHR
+    create_info.imageFormat = chain.format.format
+    create_info.imageColorSpace = chain.format.colorSpace
+    create_info.presentMode = chain.present_mode
+    create_info.imageExtent = chain.extent
+    create_info.minImageCount = image_count
+    create_info.imageArrayLayers = 1
+    create_info.imageUsage = {.COLOR_ATTACHMENT}
+    create_info.surface = ctx.window_surface
+
+    create_info.imageSharingMode = .EXCLUSIVE
+
+    create_info.preTransform = support.capabilities.currentTransform
+    create_info.compositeAlpha = {.OPAQUE}
+    create_info.clipped = true
+
+    res := vk.CreateSwapchainKHR(ctx.device, &create_info, {}, &chain.chain)
+    if res != .SUCCESS {
+        log.error("Error creating swapchain:", res)
+        ok = false
+    }
+
+    sw_image_count : u32
+    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &sw_image_count, nil)
+
+    chain.images = make([]vk.Image, sw_image_count)
+    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &sw_image_count, &chain.images[0])
+
+    if sw_image_count == 0 {
+        log.error("Error retrieving swapchain images")
+        ok = false
+    }
+
+    chain.views, ok = _create_image_views(ctx.device, chain)
 
     return
 }
 
-get_swapchain_support :: proc(ctx : ^Context) -> (support : SwapchainSupport, ok : bool) {
+_create_window_surface :: proc(ctx : ^Context, window : ^sdl.Window) -> (surface: vk.SurfaceKHR, ok : bool) {
+    ok = sdl.Vulkan_CreateSurface(window, ctx.instance, {}, &surface)
+
+    return
+}
+
+_get_swapchain_support :: proc(ctx : ^Context) -> (support : SwapchainSupport, ok : bool) {
     ok = true
 
     res := vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.phys_dev, ctx.window_surface, &support.capabilities)
@@ -91,59 +150,6 @@ _pick_swap_extent :: proc(sc_support : SwapchainSupport, w, h : u32) -> (extent 
     return
 }
 
-create_swapchain :: proc(ctx : ^Context, support : SwapchainSupport) -> (chain: Swapchain, ok : bool) {
-    chain.format = _pick_swap_surface_format(support)
-    chain.present_mode = _pick_swap_present_mode(support)
-    chain.extent = _pick_swap_extent(support, 500, 500) // TODO)) figure out a way to get window dimensions here
-
-    if support.capabilities.maxImageCount == 0 {
-        log.error("No images available for swapchain")
-        ok = false
-    }
-
-    image_count : u32 = clamp(support.capabilities.minImageCount + 1, support.capabilities.minImageCount, support.capabilities.maxImageCount)
-    // TODO)) I might need to determine whether a graphics queue family is distinct from a family that supports presentKHR
-    supported_family, _ := find_queue_family_present_support(ctx)
-    queue_indices : []u32 = {supported_family.family_idx}
-
-    create_info : vk.SwapchainCreateInfoKHR
-    create_info.sType = .SWAPCHAIN_CREATE_INFO_KHR
-    create_info.imageFormat = chain.format.format
-    create_info.imageColorSpace = chain.format.colorSpace
-    create_info.presentMode = chain.present_mode
-    create_info.imageExtent = chain.extent
-    create_info.minImageCount = image_count
-    create_info.imageArrayLayers = 1
-    create_info.imageUsage = {.COLOR_ATTACHMENT}
-    create_info.surface = ctx.window_surface
-
-    create_info.imageSharingMode = .EXCLUSIVE
-
-    create_info.preTransform = support.capabilities.currentTransform
-    create_info.compositeAlpha = {.OPAQUE}
-    create_info.clipped = true
-
-    res := vk.CreateSwapchainKHR(ctx.device, &create_info, {}, &chain.chain)
-    if res != .SUCCESS {
-        log.error("Error creating swapchain:", res)
-        ok = false
-    }
-
-    sw_image_count : u32
-    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &sw_image_count, nil)
-
-    chain.images = make([]vk.Image, sw_image_count)
-    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &sw_image_count, &chain.images[0])
-
-    if sw_image_count == 0 {
-        log.error("Error retrieving swapchain images")
-        ok = false
-    }
-
-    chain.views, ok = _create_image_views(ctx.device, chain)
-
-    return
-}
 
 _create_image_views :: proc(device : vk.Device, swapchain : Swapchain) -> (views : []vk.ImageView, ok : bool) {
     ok = true
@@ -176,4 +182,18 @@ _create_image_views :: proc(device : vk.Device, swapchain : Swapchain) -> (views
     }
     
     return
+}
+
+destroy_swapchain :: proc(ctx: ^Context, chain: ^Swapchain) {
+    for i in 0..<len(chain.views) {
+        vk.DestroyImageView(ctx.device, chain.views[i], {})
+    }
+
+    for i in 0..<len(chain.images) {
+        vk.DestroyImage(ctx.device, chain.images[i], {})
+    }
+
+    vk.DestroySwapchainKHR(ctx.device, chain.chain, {})
+
+    vk.DestroySurfaceKHR(ctx.instance, chain.surface, {})
 }

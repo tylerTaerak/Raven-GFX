@@ -1,13 +1,8 @@
 package game_vulkan
 
 import vk "vendor:vulkan"
+import "../core"
 
-
-// TODO)) Should maybe be in core (might be referenced across different graphics API's)
-Descriptor_Type :: enum {
-    STORAGE,
-    UNIFORM
-}
 
 Descriptor_Collection :: struct {
     set_count : int,
@@ -19,11 +14,11 @@ Descriptor_Collection :: struct {
 
 Descriptor_Config :: struct {
     count : u32,
-    type_count : [Descriptor_Type]u32
+    type_count : [core.Descriptor_Type]u32
 }
 
 create_descriptor_set :: proc(ctx: ^Context, cfg: Descriptor_Config) -> (collection: Descriptor_Collection, ok: bool=true) {
-    pool_sizes : [Descriptor_Type]vk.DescriptorPoolSize
+    pool_sizes : [core.Descriptor_Type]vk.DescriptorPoolSize
 
     pool_sizes[.STORAGE] = {
         type = .STORAGE_BUFFER,
@@ -58,17 +53,10 @@ create_descriptor_set :: proc(ctx: ^Context, cfg: Descriptor_Config) -> (collect
     defer delete(bindings)
 
     index : u32 = 0
-    for type in Descriptor_Type {
+    for type in core.Descriptor_Type {
         for _ in 0..<cfg.type_count[type] {
             binding : vk.DescriptorSetLayoutBinding
-            switch type {
-            case .STORAGE:
-                binding.descriptorType = .STORAGE_BUFFER
-            case .UNIFORM:
-                binding.descriptorType = .UNIFORM_BUFFER
-
-            }
-
+            binding.descriptorType = _to_vk_descriptor_type(type)
             binding.binding = index
             binding.descriptorCount = 1
             binding.stageFlags = {.VERTEX}
@@ -110,7 +98,7 @@ create_descriptor_set :: proc(ctx: ^Context, cfg: Descriptor_Config) -> (collect
     return
 }
 
-update_descriptor_sets :: proc(ctx: ^Context, set: ^Descriptor_Collection, buffers: [][]Buffer) -> bool {
+update_descriptor_sets :: proc(ctx: ^Context, set: ^Descriptor_Collection, buffers: [][]$T/Buffer($E)) -> bool {
     assert(len(buffers) == set.set_count)
 
     updates : [dynamic]vk.WriteDescriptorSet
@@ -150,7 +138,7 @@ update_descriptor_sets :: proc(ctx: ^Context, set: ^Descriptor_Collection, buffe
     return true
 }
 
-delete_descriptor_set :: proc(ctx: ^Context, set: ^Descriptor_Collection) {
+destroy_descriptor_set :: proc(ctx: ^Context, set: ^Descriptor_Collection) {
     vk.FreeDescriptorSets(ctx.device, set.pool, u32(set.set_count), &set.set[0])
 
     for i in 0..<set.set_count {

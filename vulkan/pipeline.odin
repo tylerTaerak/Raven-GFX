@@ -4,7 +4,9 @@ import "core:log"
 import "core:os"
 
 import vk "vendor:vulkan"
+import "../core"
 
+// final pipeline object
 Pipeline :: struct {
     data : vk.Pipeline,
     layout : vk.PipelineLayout
@@ -13,106 +15,55 @@ Pipeline :: struct {
 
 // Pipeline Config
 Pipeline_Config :: struct {
-    vertex_shader_path : string,
-    fragment_shader_path: string,
-    layout: int,
-    descriptor_sets: Descriptor_Collection,
-    color_formats : []Image_Format,
+    vertex_shader_path      : string,
+    fragment_shader_path    : string,
+    layout                  : int,
+    descriptor_sets         : Descriptor_Collection,
+    color_formats           : []core.Image_Format,
 
     // these are optional fields that will be considered dynamic if not filled out
-    topology: Topology_Primitive, // will default to NONE if not set by user
-    viewport: Maybe(Viewport_Config),
-    rasterization: Maybe(Rasterizer_Config),
-    depth: Maybe(Depth_State_Config),
-    blend_state: Maybe(Color_Blend_Config)
-}
-
-// TODO)) Maybe should live in core
-Topology_Primitive :: enum {
-    NONE,
-    TRIANGLE_LIST
-}
-
-Front_Face :: enum {
-    NONE,
-    CLOCKWISE,
-    COUNTERCLOCKWISE
-}
-
-Cull_Mode :: enum {
-    NONE,
-    BACK,
-    FRONT
-}
-
-Compare_Operation :: enum {
-    NONE,
-    LESS,
-    EQUAL,
-    LEQUAL,
-    GREATER,
-    NOT_EQUAL,
-    GEQUAL,
-    ALWAYS
-}
-
-Stencil_Operation :: enum {
-    NONE,
-    KEEP,
-    ZERO,
-    REPLACE,
-    INCREMENT_CLAMP,
-    DECREMENT_CLAMP,
-    INVERT,
-    INCREMENT_WRAP,
-    DECREMENT_WRAP
-}
-
-Blend_Operation :: enum {
-    NONE,
-    ADD,
-    SUBTRACT,
-    REVERSE_SUBTRACT,
-    MIN,
-    MAX
+    topology                : core.Topology_Primitive, // will default to NONE if not set by user
+    viewport                : Maybe(Viewport_Config),
+    rasterization           : Maybe(Rasterizer_Config),
+    depth                   : Maybe(Depth_State_Config),
+    blend_state             : Maybe(Color_Blend_Config)
 }
 
 Viewport_Config :: struct {
-    viewport_top_left : [2]f32,
-    viewport_bot_right: [2]f32,
-    scissor_top_left : [2]i32,
-    scissor_bot_right: [2]i32
+    viewport_top_left   : [2]f32,
+    viewport_bot_right  : [2]f32,
+    scissor_top_left    : [2]i32,
+    scissor_bot_right   : [2]i32
 }
 
 Rasterizer_Config :: struct {
-    front_face: Front_Face,
-    cull_mode: Cull_Mode,
-    line_width: f32
+    front_face  : core.Front_Face,
+    cull_mode   : core.Cull_Mode,
+    line_width  : f32
 }
 
 Depth_State_Config :: struct {
-    read_depth : b32,
-    write_depth : b32,
-    read_stencil: b32,
-    depth_compare_op : Compare_Operation,
-    stencil_compare_op : Compare_Operation,
-    stencil_fail_op : Stencil_Operation,
-    stencil_pass_op : Stencil_Operation,
-    stencil_depth_fail_op : Stencil_Operation,
-    depth_format : Image_Format,
-    stencil_format: Image_Format
+    read_depth              : b32,
+    write_depth             : b32,
+    read_stencil            : b32,
+    depth_compare_op        : core.Compare_Operation,
+    stencil_compare_op      : core.Compare_Operation,
+    stencil_fail_op         : core.Stencil_Operation,
+    stencil_pass_op         : core.Stencil_Operation,
+    stencil_depth_fail_op   : core.Stencil_Operation,
+    depth_format            : core.Image_Format,
+    stencil_format          : core.Image_Format
 }
 
 Color_Blend_Config :: struct {
-    enable_blend : b32,
-    color_blend_op : Blend_Operation,
-    alpha_blend_op : Blend_Operation
+    enable_blend    : b32,
+    color_blend_op  : core.Blend_Operation,
+    alpha_blend_op  : core.Blend_Operation
 }
 
-// TODO)) A lot of pipeline configurations can be dynamic - assess needs to ascertain if things need to be static or dynamic
-// A way to handle this is to pass a config object where most fields are `Maybe(T)`, so if something is nil we assume it to
-// be a dynamic state
-create_pipeline :: proc(ctx : ^Context, cfg : Pipeline_Config) -> (pipeline: Pipeline, ok : bool = true) {
+create_pipeline :: proc(
+        ctx : ^Context,
+        cfg : Pipeline_Config) -> (pipeline: Pipeline, ok : bool = true) {
     vertex_bin := os.read_entire_file_from_filename(cfg.vertex_shader_path) or_return
     fragment_bin := os.read_entire_file_from_filename(cfg.fragment_shader_path) or_return
 
@@ -142,10 +93,7 @@ create_pipeline :: proc(ctx : ^Context, cfg : Pipeline_Config) -> (pipeline: Pip
     if cfg.topology != .NONE {
         input_asm = new(vk.PipelineInputAssemblyStateCreateInfo)
         input_asm.sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO
-         #partial switch cfg.topology {
-             case .TRIANGLE_LIST:
-                input_asm.topology = .TRIANGLE_LIST
-         }
+        input_asm.topology = _to_vk_topology(cfg.topology)
     } else {
         append(&dynamic_states, vk.DynamicState.PRIMITIVE_TOPOLOGY)
     }
@@ -156,21 +104,8 @@ create_pipeline :: proc(ctx : ^Context, cfg : Pipeline_Config) -> (pipeline: Pip
     if raster_state, found_raster := cfg.rasterization.?; found_raster {
         rasterizer = new(vk.PipelineRasterizationStateCreateInfo)
         rasterizer.sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO
-
-        #partial switch (raster_state.front_face) {
-            case .CLOCKWISE:
-                rasterizer.frontFace = .CLOCKWISE
-            case .COUNTERCLOCKWISE:
-                rasterizer.frontFace = .COUNTER_CLOCKWISE
-        }
-
-        #partial switch (raster_state.cull_mode) {
-            case .BACK:
-                rasterizer.cullMode = {.BACK}
-            case .FRONT:
-                rasterizer.cullMode = {.FRONT}
-        }
-
+        rasterizer.frontFace = _to_vk_front_face(raster_state.front_face)
+        rasterizer.cullMode = {_to_vk_cull_mode(raster_state.cull_mode)}
         rasterizer.depthBiasEnable = false
         rasterizer.depthClampEnable = false
         rasterizer.lineWidth = raster_state.line_width
@@ -188,23 +123,7 @@ create_pipeline :: proc(ctx : ^Context, cfg : Pipeline_Config) -> (pipeline: Pip
         depth_state.sType = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
         depth_state.depthTestEnable = depth.read_depth
         depth_state.depthWriteEnable = depth.write_depth
-
-        #partial switch (depth.depth_compare_op) {
-            case .GREATER:
-                depth_state.depthCompareOp = .GREATER
-            case .NOT_EQUAL:
-                depth_state.depthCompareOp = .NOT_EQUAL
-            case .LEQUAL:
-                depth_state.depthCompareOp = .LESS_OR_EQUAL
-            case .GEQUAL:
-                depth_state.depthCompareOp = .GREATER_OR_EQUAL
-            case .EQUAL:
-                depth_state.depthCompareOp = .EQUAL
-            case .LESS:
-                depth_state.depthCompareOp = .LESS
-            case .ALWAYS:
-                depth_state.depthCompareOp = .ALWAYS
-        }
+        depth_state.depthCompareOp = _to_vk_compare_op(depth.depth_compare_op)
 
         depth_state.stencilTestEnable = depth.read_stencil
 
@@ -268,31 +187,8 @@ create_pipeline :: proc(ctx : ^Context, cfg : Pipeline_Config) -> (pipeline: Pip
         blend_state.srcAlphaBlendFactor = .ONE
         blend_state.dstAlphaBlendFactor = .ZERO
         blend_state.blendEnable = color_state.enable_blend
-        #partial switch (color_state.color_blend_op) {
-            case .ADD:
-                blend_state.colorBlendOp = .ADD
-            case .SUBTRACT:
-                blend_state.colorBlendOp = .SUBTRACT
-            case .REVERSE_SUBTRACT:
-                blend_state.colorBlendOp = .REVERSE_SUBTRACT
-            case .MIN:
-                blend_state.colorBlendOp = .MIN
-            case .MAX:
-                blend_state.colorBlendOp = .MAX
-        }
-
-        #partial switch (color_state.alpha_blend_op) {
-            case .ADD:
-                blend_state.alphaBlendOp = .ADD
-            case .SUBTRACT:
-                blend_state.alphaBlendOp = .SUBTRACT
-            case .REVERSE_SUBTRACT:
-                blend_state.alphaBlendOp = .REVERSE_SUBTRACT
-            case .MIN:
-                blend_state.alphaBlendOp = .MIN
-            case .MAX:
-                blend_state.alphaBlendOp = .MAX
-        }
+        blend_state.colorBlendOp = _to_vk_blend_op(color_state.color_blend_op)
+        blend_state.alphaBlendOp = _to_vk_blend_op(color_state.alpha_blend_op)
 
         color_blend.pAttachments = blend_state
     } else {
@@ -387,7 +283,6 @@ _load_dynamic_states :: proc(states : []vk.DynamicState) -> (create_info : vk.Pi
 }
 
 _load_vertex_input :: proc() -> (create_info : vk.PipelineVertexInputStateCreateInfo) {
-    // TODO)) I think this is where I need to bind my vertex/instance descriptor sets from ctx.data
     create_info.sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
     create_info.vertexBindingDescriptionCount = 0
     create_info.pVertexBindingDescriptions = nil
@@ -445,4 +340,9 @@ _load_pipeline :: proc(ctx : ^Context,
     }
 
     return
+}
+
+destroy_pipeline :: proc(ctx: ^Context, pipeline: ^Pipeline) {
+    vk.DestroyPipeline(ctx.device, pipeline.data, {})
+    vk.DestroyPipelineLayout(ctx.device, pipeline.layout, {})
 }
