@@ -84,11 +84,12 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes) -> (ok : bool)
 
         }
 
-        append(&queues, fam^)
-
         if !ok {
             log.error("Unable to find queue familieis for graphics device for type", type)
+            continue
         }
+
+        append(&queues, fam^)
     }
 
     real_queues : [dynamic]QueueFamily

@@ -7,7 +7,8 @@ import "../core"
 
 Render_Image :: struct {
     image: vk.Image,
-    view : vk.ImageView
+    view : vk.ImageView,
+    size : [2]u32
 }
 
 create_image :: proc(ctx: ^Context, size: [2]u32, format: core.Image_Format, usage: core.Image_Usage) -> (img: Render_Image, ok: bool=true) {
@@ -62,6 +63,8 @@ create_image :: proc(ctx: ^Context, size: [2]u32, format: core.Image_Format, usa
     }
 
     res = vk.CreateImageView(ctx.device, &view_info, {}, &img.view)
+
+    img.size = size
 
     ok = res == .SUCCESS
 

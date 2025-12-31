@@ -60,7 +60,9 @@ _populate_queue_family_properties :: proc(ctx : ^Context) -> (ok : bool = true) 
         log.info("Queue Family", idx, "has flags", fam.queueFlags)
 
 
-        vk.GetPhysicalDeviceSurfaceSupportKHR(ctx.phys_dev, u32(idx), ctx.window_surface, &ctx.queues[idx].surface_support)
+        res := vk.GetPhysicalDeviceSurfaceSupportKHR(ctx.phys_dev, u32(idx), ctx.window_surface, &ctx.queues[idx].surface_support)
+
+        ok = res == .SUCCESS
     }
 
     return

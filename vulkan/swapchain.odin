@@ -13,7 +13,6 @@ SwapchainSupport :: struct {
 }
 
 Swapchain :: struct {
-    surface         : vk.SurfaceKHR,
     chain           : vk.SwapchainKHR,
     images          : []vk.Image,
     views           : []vk.ImageView,
@@ -22,9 +21,7 @@ Swapchain :: struct {
     present_mode    : vk.PresentModeKHR
 }
 
-create_swapchain :: proc(ctx : ^Context, window: ^core.Window) -> (chain: Swapchain, ok : bool) {
-    chain.surface = _create_window_surface(ctx, window.window_ptr) or_return
-
+create_swapchain :: proc(ctx : ^Context) -> (chain: Swapchain, ok : bool) {
     support := _get_swapchain_support(ctx) or_return
 
     chain.format = _pick_swap_surface_format(support)
@@ -53,6 +50,8 @@ create_swapchain :: proc(ctx : ^Context, window: ^core.Window) -> (chain: Swapch
     create_info.surface = ctx.window_surface
 
     create_info.imageSharingMode = .EXCLUSIVE
+    create_info.queueFamilyIndexCount = u32(len(queue_indices))
+    create_info.pQueueFamilyIndices = &queue_indices[0]
 
     create_info.preTransform = support.capabilities.currentTransform
     create_info.compositeAlpha = {.OPAQUE}
@@ -77,14 +76,11 @@ create_swapchain :: proc(ctx : ^Context, window: ^core.Window) -> (chain: Swapch
 
     chain.views, ok = _create_image_views(ctx.device, chain)
 
-    return
-}
-
-_create_window_surface :: proc(ctx : ^Context, window : ^sdl.Window) -> (surface: vk.SurfaceKHR, ok : bool) {
-    ok = sdl.Vulkan_CreateSurface(window, ctx.instance, {}, &surface)
+    log.info("Created Swapchain")
 
     return
 }
+
 
 _get_swapchain_support :: proc(ctx : ^Context) -> (support : SwapchainSupport, ok : bool) {
     ok = true
@@ -194,6 +190,4 @@ destroy_swapchain :: proc(ctx: ^Context, chain: ^Swapchain) {
     }
 
     vk.DestroySwapchainKHR(ctx.device, chain.chain, {})
-
-    vk.DestroySurfaceKHR(ctx.instance, chain.surface, {})
 }

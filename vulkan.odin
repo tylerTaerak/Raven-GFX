@@ -4,13 +4,13 @@ package gfx
 
 import vulk "./vulkan"
 import vk "vendor:vulkan"
+import sdl "vendor:sdl3"
 import "./core"
 
 /**
   This file defines the types used in Raven for using a Vulkan backend
 */
 
-// TODO)) Have this passed to this code from wrapping library
 REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_SWAPCHAIN_EXTENSION_NAME,
     vk.EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME,
@@ -23,9 +23,12 @@ REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_MAINTENANCE_2_EXTENSION_NAME
 }
 
+WINDOW_FLAGS : sdl.WindowFlags = {.VULKAN, .BORDERLESS}
 
+
+// data objects and related procedures
 Backend_Context             :: vulk.Context
-_create_context             :: proc(window: core.Window) -> (^Backend_Context, bool) {
+_create_context             :: proc(window: ^core.Window) -> (^Backend_Context, bool) {
     return vulk.create_context(window, REQUIRED_DEVICE_EXTENSIONS)
 }
 _destroy_context            :: vulk.destroy_context
@@ -69,4 +72,14 @@ _destroy_timeline           :: vulk.destroy_timeline
 _get_ticks                  :: vulk.get_current_ticks
 _tick                       :: vulk.tick
 
-// need AcquireNextImage, PresentImage
+Fence                       :: vulk.Fence
+_create_fence               :: vulk.init_fence
+_wait_for_fence             :: vulk.wait_for_fence
+_reset_fence                :: vulk.reset_fence
+_destroy_fence              :: vulk.destroy_fence
+
+_acquire_swapchain_image    :: vulk.acquire_next_image_index
+_present_image              :: vulk.present_image
+
+// graphics operations
+// fill out as needed

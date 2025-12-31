@@ -1,72 +1,72 @@
 package gfx
 
-import gvk "vulkan"
 import core "core"
+import sdl "vendor:sdl3"
 import "core:log"
 
+FRAMES_IN_FLIGHT :: 3
+
 Context :: struct {
-    vk_ctx : ^gvk.Context,
-    window : core.Window,
-    camera : core.Camera
+    backend         : ^Backend_Context,
+    swapchain       : Swapchain,
+    frame_fences    : [FRAMES_IN_FLIGHT]Fence,
+    frame_index     : int,
+    window          : core.Window,
+    camera          : core.Camera
 }
 
 Core_Context : Context
 
-Mesh :: gvk.Mesh_Handle
+Config :: struct {
+    window_title: string,
+    window_w, window_h: int
+}
 
 
-init :: proc() -> (ok : bool = true) {
-    Core_Context.window = core.create_window("Test Window", 500, 500, {.VULKAN, .BORDERLESS})
+initialize :: proc(cfg: Config) -> (ok : bool = true) {
+    sdl.Init({.EVENTS, .GAMEPAD, .VIDEO, .JOYSTICK}) or_return
 
-    Core_Context.vk_ctx = gvk.create_context(Core_Context.window) or_return
+    // TODO)) should probably expose a subset of window flags for a user
+    Core_Context.window = core.create_window(
+        cfg.window_title,
+        cfg.window_w,
+        cfg.window_h,
+        WINDOW_FLAGS
+    )
+
+    Core_Context.backend = _create_context(&Core_Context.window) or_return
+
+    Core_Context.swapchain = _create_swapchain(Core_Context.backend) or_return
+
+    for i in 0..<FRAMES_IN_FLIGHT {
+        Core_Context.frame_fences[i] = _create_fence(Core_Context.backend)
+    }
     
     log.info("initialized graphics context")
-
-    shader_path :: #directory + "shaders/gen/default_3d/"
-
-    log.info(shader_path)
-
-    gvk.create_pipeline(Core_Context.vk_ctx, shader_path + "vert.spv", shader_path + "frag.spv") or_return
-
-    log.info("created graphics pipeline")
     return
 }
 
+reload :: proc(cfg: Config) {
+    _destroy_swapchain(Core_Context.backend, &Core_Context.swapchain)
+
+    core.update_window_data(&Core_Context.window, cfg.window_title, cfg.window_w, cfg.window_h)
+
+    _create_swapchain(Core_Context.backend)
+}
+
 update :: proc() {
-    gvk.run_frame(Core_Context.vk_ctx)
+    screen_image := acquire_swapchain_image(&Core_Context, Core_Context.frame_index)
+
+    _wait_for_fence(Core_Context.backend, &Core_Context.frame_fences[screen_image.index])
+    _reset_fence(Core_Context.backend, &Core_Context.frame_fences[screen_image.index])
+
+    present_swapchain_image(&Core_Context, &screen_image)
+
+    Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
 }
 
-load_mesh :: proc(filepath : string) -> Mesh{
-    model_data := core.load_model(filepath)
-    if len(model_data) > 0 {
-        return gvk.load_mesh(Core_Context.vk_ctx, model_data[0])
-    } else {
-        return 0
-    }
-}
-
-add_camera :: proc() {
-    core_cam := core.create_perscpetive_camera(&Core_Context.window, 60.0, 0.1, 100.0)
-    Core_Context.camera = core_cam
-    cam := gvk.create_camera(Core_Context.vk_ctx)
-    for i in 0..<gvk.FRAMES_IN_FLIGHT {
-        Core_Context.vk_ctx.data[i].camera = cam
-        gvk.set_camera_data(Core_Context.vk_ctx, &Core_Context.vk_ctx.data[i].camera, core_cam)
-    }
-}
-
-move_camera :: proc(transform : matrix[4,4]f32) {
-    core.move_camera_transform(&Core_Context.camera, transform)
-    for i in 0..<gvk.FRAMES_IN_FLIGHT {
-        gvk.set_camera_data(Core_Context.vk_ctx, &Core_Context.vk_ctx.data[i].camera, Core_Context.camera)
-    }
-}
-
-draw :: proc(mesh : Mesh, transform : matrix[4,4]f32) {
-    gvk.draw_mesh(Core_Context.vk_ctx, mesh, transform)
-}
-
-destroy :: proc() {
-    gvk.destroy_context(Core_Context.vk_ctx)
+shutdown :: proc() {
+    _destroy_swapchain(Core_Context.backend, &Core_Context.swapchain)
+    _destroy_context(Core_Context.backend)
     core.destroy_window(&Core_Context.window)
 }

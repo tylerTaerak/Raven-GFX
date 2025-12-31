@@ -9,6 +9,8 @@ Timeline :: struct {
     mutex   : sync.Mutex
 }
 
+Fence :: vk.Fence
+
 init_timeline :: proc(ctx: ^Context) -> Timeline {
     type_info : vk.SemaphoreTypeCreateInfo
     type_info.sType = .SEMAPHORE_TYPE_CREATE_INFO
@@ -46,4 +48,24 @@ tick :: proc(timeline: ^Timeline) -> u64 {
 
 destroy_timeline :: proc(ctx: ^Context, timeline: ^Timeline) {
     vk.DestroySemaphore(ctx.device, timeline.sem, {})
+}
+
+init_fence :: proc(ctx: ^Context) -> (fence: Fence) {
+    info : vk.FenceCreateInfo
+    info.sType = .FENCE_CREATE_INFO
+    
+    vk.CreateFence(ctx.device, &info, {}, &fence)
+    return
+}
+
+wait_for_fence :: proc(ctx: ^Context, fence: ^Fence) {
+    vk.WaitForFences(ctx.device, 1, fence, true, 50_000)
+}
+
+reset_fence :: proc(ctx: ^Context, fence: ^Fence) {
+    vk.ResetFences(ctx.device, 1, fence)
+}
+
+destroy_fence :: proc(ctx: ^Context, fence: Fence) {
+    vk.DestroyFence(ctx.device, fence, {})
 }
