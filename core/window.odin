@@ -6,7 +6,8 @@ import "core:strings"
 Window :: struct {
     window_ptr : ^sdl.Window,
     w, h : int,
-    title : string
+    title : string,
+    frame_events : [dynamic]sdl.Event
 }
 
 WindowCreateFlags :: sdl.WindowFlags
@@ -22,18 +23,25 @@ create_window :: proc(title : string, w, h : int, flags: WindowCreateFlags) -> (
     return
 }
 
-update_window_data :: proc(window : ^Window, title : string, w, h : int) {
+update_window_data :: proc(window : ^Window, title : string, w, h : int) -> bool {
+    ok : bool = true
     if title != window.title{
-        sdl.SetWindowTitle(window.window_ptr, strings.clone_to_cstring(title))
+        ok &= sdl.SetWindowTitle(window.window_ptr, strings.clone_to_cstring(title))
         window.title = title
     }
 
     if w != window.w || h != window.h{
-        sdl.SetWindowSize(window.window_ptr, i32(w), i32(h))
+        ok &= sdl.SetWindowSize(window.window_ptr, i32(w), i32(h))
         window.w = w
         window.h = h
     }
 
+    resize_ev : sdl.Event
+    resize_ev.type = .WINDOW_RESIZED
+    resize_ev.common.type = .WINDOW_RESIZED
+    resize_ev.common.timestamp = sdl.GetTicksNS()
+
+    return ok & sdl.PushEvent(&resize_ev)
 }
 
 destroy_window :: proc(window: ^Window) {

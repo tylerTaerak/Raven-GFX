@@ -1,4 +1,4 @@
-#+build linux, freebsd, openbsd, netbsd
+#+build windows, linux, freebsd, openbsd, netbsd
 #+private
 package gfx
 

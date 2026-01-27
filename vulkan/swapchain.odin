@@ -185,9 +185,5 @@ destroy_swapchain :: proc(ctx: ^Context, chain: ^Swapchain) {
         vk.DestroyImageView(ctx.device, chain.views[i], {})
     }
 
-    for i in 0..<len(chain.images) {
-        vk.DestroyImage(ctx.device, chain.images[i], {})
-    }
-
     vk.DestroySwapchainKHR(ctx.device, chain.chain, {})
 }

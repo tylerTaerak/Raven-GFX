@@ -54,7 +54,18 @@ reload :: proc(cfg: Config) {
     _create_swapchain(Core_Context.backend)
 }
 
-update :: proc() {
+update :: proc() -> bool {
+    core.refresh_frame_events(&Core_Context.window)
+
+    if core.check_resize_event(Core_Context.window) {
+        cfg : Config
+        cfg.window_title = Core_Context.window.title
+        cfg.window_w = Core_Context.window.w
+        cfg.window_h = Core_Context.window.h
+
+        reload(cfg)
+    }
+
     screen_image := acquire_swapchain_image(&Core_Context, Core_Context.frame_index)
 
     _wait_for_fence(Core_Context.backend, &Core_Context.frame_fences[screen_image.index])
@@ -63,10 +74,17 @@ update :: proc() {
     present_swapchain_image(&Core_Context, &screen_image)
 
     Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
+
+    return core.check_quit_event(Core_Context.window)
 }
 
 shutdown :: proc() {
     _destroy_swapchain(Core_Context.backend, &Core_Context.swapchain)
+
+    for i in 0..<FRAMES_IN_FLIGHT {
+        _destroy_fence(Core_Context.backend, Core_Context.frame_fences[i])
+    }
+
     _destroy_context(Core_Context.backend)
     core.destroy_window(&Core_Context.window)
 }

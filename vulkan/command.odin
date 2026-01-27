@@ -1,4 +1,4 @@
-package vulkan
+package game_vulkan
 
 import vk "vendor:vulkan"
 
