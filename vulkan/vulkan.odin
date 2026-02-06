@@ -55,37 +55,114 @@ create_context :: proc(window: ^gfx_core.Window, vulkan_extensions: []string) ->
     return
 }
 
-acquire_next_image_index :: proc(ctx: ^Context, swapchain: ^Swapchain, fence: Fence) -> (index: u32) {
-    vk.AcquireNextImageKHR(ctx.device, swapchain.chain, 500, 0, fence, &index)
+acquire_next_image_index :: proc(ctx: ^Context, swapchain: ^Swapchain, fence: Fence, semaphore: Semaphore) -> (index: u32) {
+    vk.AcquireNextImageKHR(ctx.device, swapchain.chain, 500, semaphore, fence, &index)
     return
 }
 
 draw_rendering :: proc(cmd_buffer : vk.CommandBuffer, image: Render_Image) {
-    info : vk.RenderingInfo
-    info.sType = .RENDERING_INFO
+    color_barrier : vk.ImageMemoryBarrier2KHR
+    color_barrier.sType = .IMAGE_MEMORY_BARRIER_2_KHR
+    color_barrier.image = image.image
+    color_barrier.oldLayout = .UNDEFINED
+    color_barrier.newLayout = .COLOR_ATTACHMENT_OPTIMAL
+    color_barrier.subresourceRange.aspectMask = {.COLOR}
+    color_barrier.subresourceRange.layerCount = 1
+    color_barrier.subresourceRange.levelCount = 1
+    color_barrier.srcAccessMask = {}
+    color_barrier.srcStageMask = {}
+    color_barrier.dstStageMask = {.COLOR_ATTACHMENT_OUTPUT_KHR}
+    color_barrier.dstAccessMask = {.COLOR_ATTACHMENT_WRITE}
+
+    dependencies : vk.DependencyInfoKHR
+    dependencies.sType = .DEPENDENCY_INFO_KHR
+    dependencies.imageMemoryBarrierCount = 1
+    dependencies.pImageMemoryBarriers = &color_barrier
+
+    vk.CmdPipelineBarrier2KHR(cmd_buffer, &dependencies)
+
+    info : vk.RenderingInfoKHR
+    info.sType = .RENDERING_INFO_KHR
     info.layerCount = 1
     info.colorAttachmentCount = 1
     info.renderArea = {{0, 0}, {image.size.x, image.size.y}}
 
-    attachment : vk.RenderingAttachmentInfo
-    attachment.sType = .RENDERING_ATTACHMENT_INFO
+    attachment : vk.RenderingAttachmentInfoKHR
+    attachment.sType = .RENDERING_ATTACHMENT_INFO_KHR
     attachment.imageView = image.view
     attachment.imageLayout = .COLOR_ATTACHMENT_OPTIMAL
-    attachment.resolveImageView = image.view
-    attachment.resolveImageLayout = .PRESENT_SRC_KHR
     attachment.loadOp = .CLEAR
     attachment.storeOp = .STORE
     attachment.clearValue = {color={uint32={60, 60, 205, 255}}}
 
-    info.pColorAttachments = &attachment
+    attachments : []vk.RenderingAttachmentInfoKHR = {attachment}
 
-    vk.CmdBeginRendering(cmd_buffer, &info)
+    info.pColorAttachments = &attachments[0]
 
-    vk.CmdEndRendering(cmd_buffer)
+    vk.CmdBeginRenderingKHR(cmd_buffer, &info)
+
+    vk.CmdEndRenderingKHR(cmd_buffer)
+
+    log.info("Drawing Image:", image.image)
+
+    present_barrier : vk.ImageMemoryBarrier2KHR
+    present_barrier.sType = .IMAGE_MEMORY_BARRIER_2_KHR
+    present_barrier.image = image.image
+    present_barrier.oldLayout = .COLOR_ATTACHMENT_OPTIMAL
+    present_barrier.newLayout = .PRESENT_SRC_KHR
+    present_barrier.subresourceRange.aspectMask = {.COLOR}
+    present_barrier.subresourceRange.layerCount = 1
+    present_barrier.subresourceRange.levelCount = 1
+    present_barrier.srcStageMask = {.COLOR_ATTACHMENT_OUTPUT_KHR}
+    present_barrier.srcAccessMask = {.COLOR_ATTACHMENT_WRITE}
+    present_barrier.dstStageMask = {}
+    present_barrier.dstAccessMask = {}
+
+    dependencies2 : vk.DependencyInfo
+    dependencies2.sType = .DEPENDENCY_INFO_KHR
+    dependencies2.imageMemoryBarrierCount = 1
+    dependencies2.pImageMemoryBarriers = &present_barrier
+
+    vk.CmdPipelineBarrier2KHR(cmd_buffer, &dependencies2)
 }
 
-present_image :: proc(ctx: ^Context, swapchain: ^Swapchain, index: u32) {
+submit_command_buffer :: proc(ctx: ^Context, cmd_buf : vk.CommandBuffer, queue: QueueFamily, wait_sem, signal_sem : Semaphore, signal_fence : Fence) {
+
+    log.info("Submit Wait Semaphore:", wait_sem)
+    log.info("Submit Signal Semaphore:", signal_sem)
+
+    submit_info : vk.SubmitInfo2KHR
+    submit_info.sType = .SUBMIT_INFO_2_KHR
+    submit_info.commandBufferInfoCount = 1
+    submit_info.waitSemaphoreInfoCount = 1
+    submit_info.signalSemaphoreInfoCount = 1
+
+    cmd_info : vk.CommandBufferSubmitInfoKHR
+    cmd_info.sType = .COMMAND_BUFFER_SUBMIT_INFO_KHR
+    cmd_info.commandBuffer = cmd_buf
+
+    wait_info : vk.SemaphoreSubmitInfo
+    wait_info.sType = .SEMAPHORE_SUBMIT_INFO
+    wait_info.semaphore = wait_sem
+
+    sig_info : vk.SemaphoreSubmitInfo
+    sig_info.sType = .SEMAPHORE_SUBMIT_INFO
+    sig_info.semaphore = signal_sem
+
+    submit_info.pCommandBufferInfos = &cmd_info
+    submit_info.pWaitSemaphoreInfos = &wait_info
+    submit_info.pSignalSemaphoreInfos = &sig_info
+
+    vkq : vk.Queue
+    vk.GetDeviceQueue(ctx.device, queue.family_idx, 0, &vkq)
+
+    vk.QueueSubmit2KHR(vkq, 1, &submit_info, signal_fence)
+}
+
+present_image :: proc(ctx: ^Context, swapchain: ^Swapchain, index: u32, wait_sem : ^Semaphore) {
     image_indices : []u32 = {index}
+
+    log.info("Present Semaphore:", wait_sem^)
 
     queue_fam, ok := find_queue_family_present_support(ctx)
 
@@ -97,8 +174,14 @@ present_image :: proc(ctx: ^Context, swapchain: ^Swapchain, index: u32) {
     info.swapchainCount = 1
     info.pSwapchains = &swapchain.chain
     info.pImageIndices = &image_indices[0]
+    info.waitSemaphoreCount = 1
+    info.pWaitSemaphores = wait_sem
 
-    vk.QueuePresentKHR(queue, &info)
+    res := vk.QueuePresentKHR(queue, &info)
+
+    if res != .SUCCESS {
+        log.error("\n\nError Presenting Queue: ", res)
+    }
 }
 
 destroy_context :: proc(ctx : ^Context) {
@@ -111,4 +194,8 @@ destroy_context :: proc(ctx : ^Context) {
     vk.DestroyInstance(ctx.instance, {})
 
     free(ctx)
+}
+
+wait_for_idle :: proc(ctx : ^Context) {
+    vk.DeviceWaitIdle(ctx.device)
 }

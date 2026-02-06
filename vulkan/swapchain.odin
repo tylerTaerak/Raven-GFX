@@ -21,7 +21,7 @@ Swapchain :: struct {
     present_mode    : vk.PresentModeKHR
 }
 
-create_swapchain :: proc(ctx : ^Context) -> (chain: Swapchain, ok : bool) {
+create_swapchain :: proc(ctx : ^Context, previous_swapchain : Maybe(Swapchain) = nil) -> (chain: Swapchain, ok : bool) {
     support := _get_swapchain_support(ctx) or_return
 
     chain.format = _pick_swap_surface_format(support)
@@ -48,6 +48,11 @@ create_swapchain :: proc(ctx : ^Context) -> (chain: Swapchain, ok : bool) {
     create_info.imageArrayLayers = 1
     create_info.imageUsage = {.COLOR_ATTACHMENT}
     create_info.surface = ctx.window_surface
+
+    // reuse any applicable resources
+    if prev_swapchain, found := previous_swapchain.?; found { 
+        create_info.oldSwapchain = prev_swapchain.chain
+    }
 
     create_info.imageSharingMode = .EXCLUSIVE
     create_info.queueFamilyIndexCount = u32(len(queue_indices))

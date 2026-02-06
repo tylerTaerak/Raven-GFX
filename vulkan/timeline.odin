@@ -11,6 +11,8 @@ Timeline :: struct {
 
 Fence :: vk.Fence
 
+Semaphore :: vk.Semaphore
+
 init_timeline :: proc(ctx: ^Context) -> Timeline {
     type_info : vk.SemaphoreTypeCreateInfo
     type_info.sType = .SEMAPHORE_TYPE_CREATE_INFO
@@ -68,4 +70,17 @@ reset_fence :: proc(ctx: ^Context, fence: ^Fence) {
 
 destroy_fence :: proc(ctx: ^Context, fence: Fence) {
     vk.DestroyFence(ctx.device, fence, {})
+}
+
+init_semaphore :: proc(ctx: ^Context) -> (sem : Semaphore) {
+    info : vk.SemaphoreCreateInfo
+    info.sType = .SEMAPHORE_CREATE_INFO
+    info.flags = {}
+
+    vk.CreateSemaphore(ctx.device, &info, {}, &sem)
+    return
+}
+
+destroy_semaphore :: proc(ctx: ^Context, sem : Semaphore) {
+    vk.DestroySemaphore(ctx.device, sem, {})
 }
