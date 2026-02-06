@@ -13,6 +13,12 @@ Fence :: vk.Fence
 
 Semaphore :: vk.Semaphore
 
+Frame_Sync :: struct {
+    in_flight : Fence,
+    image_acquired : Semaphore,
+    render_finished : Semaphore
+}
+
 init_timeline :: proc(ctx: ^Context) -> Timeline {
     type_info : vk.SemaphoreTypeCreateInfo
     type_info.sType = .SEMAPHORE_TYPE_CREATE_INFO
@@ -83,4 +89,18 @@ init_semaphore :: proc(ctx: ^Context) -> (sem : Semaphore) {
 
 destroy_semaphore :: proc(ctx: ^Context, sem : Semaphore) {
     vk.DestroySemaphore(ctx.device, sem, {})
+}
+
+init_frame_sync :: proc(ctx: ^Context) -> (sync : Frame_Sync) {
+    sync.in_flight = init_fence(ctx)
+    sync.image_acquired = init_semaphore(ctx)
+    sync.render_finished = init_semaphore(ctx)
+
+    return
+}
+
+destroy_frame_sync :: proc(ctx: ^Context, sync: ^Frame_Sync) {
+    destroy_semaphore(ctx, sync.render_finished)
+    destroy_semaphore(ctx, sync.image_acquired)
+    destroy_fence(ctx, sync.in_flight)
 }

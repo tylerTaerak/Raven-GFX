@@ -19,7 +19,7 @@ REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_MAINTENANCE_2_EXTENSION_NAME
 }
 
-WINDOW_FLAGS : sdl.WindowFlags = {.VULKAN, .BORDERLESS}
+WINDOW_FLAGS : sdl.WindowFlags = {.VULKAN, .BORDERLESS, .RESIZABLE}
 
 _create_context             :: proc(window: ^core.Window) -> (^Backend_Context, bool) {
     return vulk.create_context(window, REQUIRED_DEVICE_EXTENSIONS)

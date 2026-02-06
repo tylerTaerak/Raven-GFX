@@ -17,7 +17,6 @@ QueueFamily :: struct {
 find_queue_family_by_type :: proc(ctx : ^Context, types : QueueTypes) -> (fam : ^QueueFamily, ok : bool = false) {
     for &family in ctx.queues {
         if types & family.family_types == types {
-            log.info("Found queue family", family, "for types", types)
             fam = &family
             ok = true
             return

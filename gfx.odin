@@ -14,8 +14,7 @@ Frame_Sync :: struct {
 
 Context :: struct {
     backend         : ^Backend_Context,
-    swapchain       : Swapchain,
-    sync            : [FRAMES_IN_FLIGHT]Frame_Sync,
+    swapchain       : Swapchain(FRAMES_IN_FLIGHT),
     frame_index     : int,
     window          : core.Window,
     camera          : core.Camera,
@@ -43,13 +42,7 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
 
     Core_Context.backend = _create_context(&Core_Context.window) or_return
 
-    Core_Context.swapchain = _create_swapchain(Core_Context.backend) or_return
-
-    for i in 0..<FRAMES_IN_FLIGHT {
-        Core_Context.sync[i].fence = _create_fence(Core_Context.backend)
-        Core_Context.sync[i].render = _create_semaphore(Core_Context.backend)
-        Core_Context.sync[i].present = _create_semaphore(Core_Context.backend)
-    }
+    Core_Context.swapchain = _create_swapchain(Core_Context.backend, Core_Context.window.window_ptr, FRAMES_IN_FLIGHT, nil) or_return
 
     queue_fam : ^QueueFamily 
     queue_fam, ok = _find_queue_family(Core_Context.backend, {.GRAPHICS})
@@ -65,7 +58,7 @@ reload :: proc(cfg: Config) {
 
     core.update_window_data(&Core_Context.window, cfg.window_title, cfg.window_w, cfg.window_h)
 
-    Core_Context.swapchain, _ = _create_swapchain(Core_Context.backend, Core_Context.swapchain)
+    // Core_Context.swapchain, _ = _create_swapchain(Core_Context.backend, FRAMES_IN_FLIGHT, &Core_Context.swapchain)
 
     // destroy the old one now that we're finished with it
     _destroy_swapchain(Core_Context.backend, &Core_Context.swapchain)
@@ -74,19 +67,24 @@ reload :: proc(cfg: Config) {
 update :: proc() -> bool {
     core.refresh_frame_events(&Core_Context.window)
 
-    if core.check_resize_event(Core_Context.window) {
-        cfg : Config
-        cfg.window_title = Core_Context.window.title
-        cfg.window_w = Core_Context.window.w
-        cfg.window_h = Core_Context.window.h
+    _wait_for_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
+    _reset_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
 
-        reload(cfg)
+    screen_image, acquired := acquire_swapchain_image(&Core_Context, Core_Context.frame_index)
+
+    if !acquired {
+        log.warn("Error acquiring swapchain image")
+        return true
     }
 
-    _wait_for_fence(Core_Context.backend, &Core_Context.sync[Core_Context.frame_index].fence)
-    _reset_fence(Core_Context.backend, &Core_Context.sync[Core_Context.frame_index].fence)
+    // if core.check_resize_event(Core_Context.window) {
+    //     cfg : Config
+    //     cfg.window_title = Core_Context.window.title
+    //     cfg.window_w = Core_Context.window.w
+    //     cfg.window_h = Core_Context.window.h
 
-    screen_image := acquire_swapchain_image(&Core_Context, Core_Context.frame_index)
+    //     reload(cfg)
+    // }
 
     _begin_command_buffer(Core_Context.main_cmd_set, Core_Context.frame_index)
 
@@ -100,16 +98,14 @@ update :: proc() -> bool {
         Core_Context.backend,
         Core_Context.main_cmd_set.buffers[Core_Context.frame_index],
         queue_fam^,
-        Core_Context.sync[Core_Context.frame_index].render,
-        Core_Context.sync[Core_Context.frame_index].present,
-        Core_Context.sync[Core_Context.frame_index].fence
+        Core_Context.swapchain.sync[Core_Context.frame_index].image_acquired,
+        Core_Context.swapchain.sync[screen_image.index].render_finished,
+        Core_Context.swapchain.sync[Core_Context.frame_index].in_flight
     )
 
     present_swapchain_image(&Core_Context, &screen_image)
 
     Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
-
-    log.info(core.check_quit_event(Core_Context.window))
 
     return !core.check_quit_event(Core_Context.window)
 }
@@ -120,12 +116,6 @@ shutdown :: proc() {
     _destroy_command_set(Core_Context.backend, &Core_Context.main_cmd_set)
 
     _destroy_swapchain(Core_Context.backend, &Core_Context.swapchain)
-
-    for i in 0..<FRAMES_IN_FLIGHT {
-        _destroy_fence(Core_Context.backend, Core_Context.sync[i].fence)
-        _destroy_semaphore(Core_Context.backend, Core_Context.sync[i].render)
-        _destroy_semaphore(Core_Context.backend, Core_Context.sync[i].present)
-    }
 
     _destroy_context(Core_Context.backend)
     core.destroy_window(&Core_Context.window)

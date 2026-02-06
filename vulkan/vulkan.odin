@@ -55,8 +55,16 @@ create_context :: proc(window: ^gfx_core.Window, vulkan_extensions: []string) ->
     return
 }
 
-acquire_next_image_index :: proc(ctx: ^Context, swapchain: ^Swapchain, fence: Fence, semaphore: Semaphore) -> (index: u32) {
-    vk.AcquireNextImageKHR(ctx.device, swapchain.chain, 500, semaphore, fence, &index)
+acquire_next_image_index :: proc(ctx: ^Context, swapchain: ^$S/Swapchain($N), fence: Fence, semaphore: Semaphore) -> (index: u32, ok : bool = true) {
+    res := vk.AcquireNextImageKHR(ctx.device, swapchain.chain, 500, semaphore, fence, &index)
+
+    if res == .ERROR_OUT_OF_DATE_KHR || res == .SUBOPTIMAL_KHR {
+        log.info("Recreating swapchain")
+        ok = recreate_swapchain(ctx, swapchain)
+    } else if res != .SUCCESS {
+        log.error("Error acquiring next swapchain image:", res)
+        ok = false
+    }
     return
 }
 
@@ -103,8 +111,6 @@ draw_rendering :: proc(cmd_buffer : vk.CommandBuffer, image: Render_Image) {
 
     vk.CmdEndRenderingKHR(cmd_buffer)
 
-    log.info("Drawing Image:", image.image)
-
     present_barrier : vk.ImageMemoryBarrier2KHR
     present_barrier.sType = .IMAGE_MEMORY_BARRIER_2_KHR
     present_barrier.image = image.image
@@ -127,10 +133,6 @@ draw_rendering :: proc(cmd_buffer : vk.CommandBuffer, image: Render_Image) {
 }
 
 submit_command_buffer :: proc(ctx: ^Context, cmd_buf : vk.CommandBuffer, queue: QueueFamily, wait_sem, signal_sem : Semaphore, signal_fence : Fence) {
-
-    log.info("Submit Wait Semaphore:", wait_sem)
-    log.info("Submit Signal Semaphore:", signal_sem)
-
     submit_info : vk.SubmitInfo2KHR
     submit_info.sType = .SUBMIT_INFO_2_KHR
     submit_info.commandBufferInfoCount = 1
@@ -159,12 +161,10 @@ submit_command_buffer :: proc(ctx: ^Context, cmd_buf : vk.CommandBuffer, queue: 
     vk.QueueSubmit2KHR(vkq, 1, &submit_info, signal_fence)
 }
 
-present_image :: proc(ctx: ^Context, swapchain: ^Swapchain, index: u32, wait_sem : ^Semaphore) {
+present_image :: proc(ctx: ^Context, swapchain: ^$S/Swapchain($N), index: u32, wait_sem : ^Semaphore) -> (ok : bool = true) {
     image_indices : []u32 = {index}
 
-    log.info("Present Semaphore:", wait_sem^)
-
-    queue_fam, ok := find_queue_family_present_support(ctx)
+    queue_fam, _ := find_queue_family_present_support(ctx)
 
     queue : vk.Queue
     vk.GetDeviceQueue(ctx.device, queue_fam.family_idx, 0, &queue)
@@ -179,9 +179,15 @@ present_image :: proc(ctx: ^Context, swapchain: ^Swapchain, index: u32, wait_sem
 
     res := vk.QueuePresentKHR(queue, &info)
 
-    if res != .SUCCESS {
-        log.error("\n\nError Presenting Queue: ", res)
+    if res == .ERROR_OUT_OF_DATE_KHR || res == .SUBOPTIMAL_KHR {
+        log.info("recreating swapchain")
+        ok = recreate_swapchain(ctx, swapchain)
+    } else if res != .SUCCESS {
+        log.error("Error Presenting Queue: ", res)
+        ok = false
     }
+
+    return
 }
 
 destroy_context :: proc(ctx : ^Context) {

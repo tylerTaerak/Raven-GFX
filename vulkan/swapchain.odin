@@ -12,21 +12,27 @@ SwapchainSupport :: struct {
     present_modes   : []vk.PresentModeKHR
 }
 
-Swapchain :: struct {
+Swapchain :: struct ($Frame_Count : int) {
     chain           : vk.SwapchainKHR,
-    images          : []vk.Image,
-    views           : []vk.ImageView,
+    images          : [Frame_Count]vk.Image,
+    views           : [Frame_Count]vk.ImageView,
+    sync            : [Frame_Count]Frame_Sync,
+    window_ptr      : ^sdl.Window,
     format          : vk.SurfaceFormatKHR,
     extent          : vk.Extent2D,
     present_mode    : vk.PresentModeKHR
 }
 
-create_swapchain :: proc(ctx : ^Context, previous_swapchain : Maybe(Swapchain) = nil) -> (chain: Swapchain, ok : bool) {
+create_swapchain :: proc(ctx : ^Context, window : ^sdl.Window, $N: int, previous_swapchain : ^Swapchain(N)) -> (chain: Swapchain(N), ok : bool) {
     support := _get_swapchain_support(ctx) or_return
+
+    w, h : i32
+    sdl.GetWindowSizeInPixels(window, &w, &h)
 
     chain.format = _pick_swap_surface_format(support)
     chain.present_mode = _pick_swap_present_mode(support)
-    chain.extent = _pick_swap_extent(support, 500, 500) // TODO)) figure out a way to get window dimensions here
+    chain.extent = _pick_swap_extent(support, u32(w), u32(h)) // TODO)) figure out a way to get window dimensions here
+    chain.window_ptr = window
 
     if support.capabilities.maxImageCount == 0 {
         log.error("No images available for swapchain")
@@ -50,8 +56,8 @@ create_swapchain :: proc(ctx : ^Context, previous_swapchain : Maybe(Swapchain) =
     create_info.surface = ctx.window_surface
 
     // reuse any applicable resources
-    if prev_swapchain, found := previous_swapchain.?; found { 
-        create_info.oldSwapchain = prev_swapchain.chain
+    if previous_swapchain != nil { 
+        create_info.oldSwapchain = previous_swapchain.chain
     }
 
     create_info.imageSharingMode = .EXCLUSIVE
@@ -68,20 +74,41 @@ create_swapchain :: proc(ctx : ^Context, previous_swapchain : Maybe(Swapchain) =
         ok = false
     }
 
-    sw_image_count : u32
-    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &sw_image_count, nil)
-
-    chain.images = make([]vk.Image, sw_image_count)
-    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &sw_image_count, &chain.images[0])
-
-    if sw_image_count == 0 {
-        log.error("Error retrieving swapchain images")
-        ok = false
-    }
+    img_count := u32(N)
+    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &img_count, &chain.images[0])
 
     chain.views, ok = _create_image_views(ctx.device, chain)
 
-    log.info("Created Swapchain")
+    for i in 0..<N {
+        chain.sync[i] = init_frame_sync(ctx)
+    }
+
+    log.info("Created Swapchain", chain.chain)
+
+    return
+}
+
+recreate_swapchain :: proc(ctx: ^Context, swapchain: ^$S/Swapchain($N)) -> (ok: bool = true) {
+    w, h : i32
+    sdl.GetWindowSizeInPixels(swapchain.window_ptr, &w, &h)
+    if w == 0 || h == 0  {
+        log.info("Found invalid window size, skipping frame")
+        ok = false
+        return
+    }
+
+    wait_for_idle(ctx)
+
+    old_chain := swapchain^
+
+    swapchain^, ok = create_swapchain(ctx, swapchain.window_ptr, len(swapchain.images), swapchain)
+
+    if !ok {
+        log.error("Error recreating swapchain")
+        swapchain^ = old_chain
+    } else {
+        destroy_swapchain(ctx, &old_chain)
+    }
 
     return
 }
@@ -152,10 +179,8 @@ _pick_swap_extent :: proc(sc_support : SwapchainSupport, w, h : u32) -> (extent 
 }
 
 
-_create_image_views :: proc(device : vk.Device, swapchain : Swapchain) -> (views : []vk.ImageView, ok : bool) {
+_create_image_views :: proc(device : vk.Device, swapchain : Swapchain($N)) -> (views : [N]vk.ImageView, ok : bool) {
     ok = true
-
-    views = make([]vk.ImageView, len(swapchain.images))
 
     for img, idx in swapchain.images {
         create_info : vk.ImageViewCreateInfo
@@ -185,8 +210,12 @@ _create_image_views :: proc(device : vk.Device, swapchain : Swapchain) -> (views
     return
 }
 
-destroy_swapchain :: proc(ctx: ^Context, chain: ^Swapchain) {
-    for i in 0..<len(chain.views) {
+destroy_swapchain :: proc(ctx: ^Context, chain: ^$S/Swapchain($N)) {
+    for i in 0..<N {
+        destroy_frame_sync(ctx, &chain.sync[i])
+    }
+
+    for i in 0..<N {
         vk.DestroyImageView(ctx.device, chain.views[i], {})
     }
 
