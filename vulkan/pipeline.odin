@@ -6,18 +6,21 @@ import "core:os"
 import vk "vendor:vulkan"
 import "../core"
 
+// TODO)) Look into using SPIRV-Reflect to use shaders to generate the data needed to build pipelines and shaders etc.
+// Ideally, I'd like to use something like Sokol, where we can use some code generation to interact with shaders
+// in the code directly
+
 // final pipeline object
 Pipeline :: struct {
     data : vk.Pipeline,
     layout : vk.PipelineLayout
 }
 
-
+// TODO)) Add support for COMPUTE pipelines, may only need descriptor and file path
 // Pipeline Config
 Pipeline_Config :: struct {
     vertex_shader_path      : string,
     fragment_shader_path    : string,
-    layout                  : int,
     descriptor_sets         : Descriptor_Collection,
     color_formats           : []core.Image_Format,
 
@@ -332,7 +335,6 @@ _load_pipeline :: proc(ctx : ^Context,
 
     create_info.pNext = rendering_info // this allows us to use dynamic rendering
 
-    // TODO)) it is possible to create multiple pipelines at once - we can look into this to see if this can be extended
     res := vk.CreateGraphicsPipelines(ctx.device, 0, 1, &create_info, {}, &pipeline)
     if res != .SUCCESS {
         log.error("Error creating graphics pipeline:", res)

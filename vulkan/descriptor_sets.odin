@@ -4,16 +4,22 @@ import vk "vendor:vulkan"
 import "../core"
 
 
+// Each Descriptor_Collection has `set_count` descriptor sets and layouts,
+// each of which have `binding_count` elements/bindings in them
 Descriptor_Collection :: struct {
     set_count : int,
     binding_count : int,
     pool : vk.DescriptorPool,
     layout : []vk.DescriptorSetLayout,
-    set : []vk.DescriptorSet
+    set : []vk.DescriptorSet,
+    type_count : [core.Descriptor_Type]u32
 }
 
 Descriptor_Config :: struct {
+    // how many sets you need, e.g. 1 for permanent, FRAMES_IN_FLIGHT for per-frame, X for per-batch, etc.
     count : u32,
+
+    // how many bindings you need, based on usage type
     type_count : [core.Descriptor_Type]u32
 }
 
@@ -48,6 +54,8 @@ create_descriptor_set :: proc(ctx: ^Context, cfg: Descriptor_Config) -> (collect
 
     collection.layout = make([]vk.DescriptorSetLayout, cfg.count)
     collection.set = make([]vk.DescriptorSet, cfg.count)
+
+    collection.type_count = cfg.type_count
 
     bindings : [dynamic]vk.DescriptorSetLayoutBinding
     defer delete(bindings)
@@ -126,8 +134,16 @@ update_descriptor_sets :: proc(ctx: ^Context, set: ^Descriptor_Collection, buffe
             write_info.dstBinding = u32(j)
             write_info.dstArrayElement = 0
             write_info.descriptorCount = 1
-            write_info.pBufferInfo = &buffer_infos[i + j]
-            // TODO)) need to pass in the type of buffer (storage vs uniform)
+            write_info.pBufferInfo = &buffer_infos[(i * set.binding_count) + j]
+
+            buffer_type : core.Descriptor_Type
+            for type in core.Descriptor_Type {
+                if set.type_count[type] < j do continue
+
+                buffer_type = type
+                break
+            }
+            write_info.descriptorType = _to_vk_descriptor_type(buffer_type)
 
             append(&updates, write_info)
         }
@@ -136,6 +152,14 @@ update_descriptor_sets :: proc(ctx: ^Context, set: ^Descriptor_Collection, buffe
     vk.UpdateDescriptorSets(ctx.device, u32(len(updates)), &updates[0], 0, {})
 
     return true
+}
+
+// TODO)) this command can probably just wrap descriptor sets and pipelines together
+// the way I have things laid out right now, descriptors and pipelines are very intertwined.
+// Should they just be one unified abstraction?
+bind_descriptors :: proc(cmd_buf : vk.CommandBuffer, pipeline : Pipeline, set: ^Descriptor_Collection, index: u32, offset: u32 = 0) {
+    vk.CmdBindDescriptorSets(cmd_buf, .GRAPHICS, pipeline.layout, offset, 1, &set.set[index], 0, nil)
+    vk.CmdBindPipeline(cmd_buf, .GRAPHICS, pipeline.data)
 }
 
 destroy_descriptor_set :: proc(ctx: ^Context, set: ^Descriptor_Collection) {
