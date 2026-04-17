@@ -70,8 +70,16 @@ wait_for_fence :: proc(ctx: ^Context, fence: ^Fence) {
     vk.WaitForFences(ctx.device, 1, fence, true, 50_000)
 }
 
+wait_for_fences :: proc(ctx: ^Context, fences: []Fence) {
+    vk.WaitForFences(ctx.device, u32(len(fences)), &fences[0], true, 50_000);
+}
+
 reset_fence :: proc(ctx: ^Context, fence: ^Fence) {
     vk.ResetFences(ctx.device, 1, fence)
+}
+
+reset_fences :: proc(ctx: ^Context, fences: []Fence) {
+    vk.ResetFences(ctx.device, u32(len(fences)), &fences[0])
 }
 
 destroy_fence :: proc(ctx: ^Context, fence: Fence) {

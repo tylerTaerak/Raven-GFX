@@ -19,8 +19,9 @@ Primitive_Data :: struct {
 }
 
 load_models_from_file :: proc(filepath : string) -> (models: []Model_Data) {
-    buffer, ok := os.read_entire_file_from_filename(filepath)
+    buffer, _ := os.read_entire_file(filepath, context.temp_allocator)
     models = load_models_from_bytes(buffer, filepath)
+
     return
 }
 

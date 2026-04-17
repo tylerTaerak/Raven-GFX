@@ -16,6 +16,8 @@ Descriptor_Type :: enum {
 Image_Format :: enum {
     RGBA8_UNORM,        // 4 x 8-bit unsigned normmalized float
     RGBA8_SRGB,         // 4 x 8-bit sRGB
+    BGRA8_UNORM,
+    BGRA8_SRGB,
     RGBA16_FLOAT,       // 4 x 16 bit float (HDR)
     INT8,               // 1 x 8-bit float
     INT32,              // 1 x 32-bit float
@@ -78,4 +80,11 @@ Blend_Operation :: enum {
     REVERSE_SUBTRACT,
     MIN,
     MAX
+}
+
+Shader_Stage :: enum {
+    VERTEX,
+    GEOMETRY,
+    FRAGMENT,
+    COMPUTE
 }

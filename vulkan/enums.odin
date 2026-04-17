@@ -18,8 +18,12 @@ _to_vk_image_format :: proc(fmt: core.Image_Format) -> vk.Format {
     switch (fmt) {
         case .RGBA8_UNORM:
             return .R8G8B8A8_UNORM
+        case .BGRA8_UNORM:
+            return .B8G8R8A8_UNORM
         case .RGBA8_SRGB:
             return .R8G8B8A8_SRGB
+        case .BGRA8_SRGB:
+            return .B8G8R8A8_SRGB
         case .RGBA16_FLOAT:
             return .R16G16B16A16_SFLOAT
         case .INT8:

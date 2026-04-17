@@ -5,19 +5,6 @@ import vk "vendor:vulkan"
 import "core:log"
 import "core:strings"
 
-// TODO)) Have this passed to this code from wrapping library
-REQUIRED_DEVICE_EXTENSIONS : []string : {
-    vk.KHR_SWAPCHAIN_EXTENSION_NAME,
-    vk.EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME,
-    vk.KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
-    vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-    vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-    vk.KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
-    vk.KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
-    vk.KHR_MULTIVIEW_EXTENSION_NAME,
-    vk.KHR_MAINTENANCE_2_EXTENSION_NAME
-}
-
 _validate_device :: proc(device : vk.PhysicalDevice, extension_names : []string) -> bool {
     ext_count : u32
     vk.EnumerateDeviceExtensionProperties(device, nil, &ext_count, nil)
@@ -67,7 +54,7 @@ pick_physical_device :: proc(ctx : ^Context, vulkan_extensions: []string) -> (ok
     return
 }
 
-create_logical_device :: proc(ctx : ^Context, types : QueueTypes) -> (ok : bool) {
+create_logical_device :: proc(ctx : ^Context, types : QueueTypes, vulkan_extensions : []string) -> (ok : bool) {
     ok = true
 
     // assume if graphics is in `types` that we want present support for it
@@ -117,16 +104,55 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes) -> (ok : bool)
         q_create_infos[i] = q_create_info
     }
 
-    required_extensions_cstr := make([]cstring, len(REQUIRED_DEVICE_EXTENSIONS))
+    required_extensions_cstr := make([]cstring, len(vulkan_extensions))
+    defer delete(required_extensions_cstr)
 
-    for ext, i in REQUIRED_DEVICE_EXTENSIONS {
+    for ext, i in vulkan_extensions {
         required_extensions_cstr[i] = strings.clone_to_cstring(ext)
     }
+
+    depth_clip_feature : vk.PhysicalDeviceDepthClipEnableFeaturesEXT
+    depth_clip_feature.sType = .PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT
+    depth_clip_feature.depthClipEnable = true
+
+    shobject_feature : vk.PhysicalDeviceShaderObjectFeaturesEXT
+    shobject_feature.sType = .PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT
+    shobject_feature.shaderObject = true
+    shobject_feature.pNext = &depth_clip_feature
+
+    ext_state_3_feature : vk.PhysicalDeviceExtendedDynamicState3FeaturesEXT
+    ext_state_3_feature.sType = .PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT
+    ext_state_3_feature.extendedDynamicState3ColorBlendEnable = true
+    ext_state_3_feature.extendedDynamicState3DepthClampEnable = true
+    ext_state_3_feature.extendedDynamicState3PolygonMode = true
+    ext_state_3_feature.extendedDynamicState3ColorBlendEquation = true
+    ext_state_3_feature.extendedDynamicState3LogicOpEnable = true
+    ext_state_3_feature.extendedDynamicState3ColorWriteMask = true
+    ext_state_3_feature.extendedDynamicState3DepthClipEnable = true;
+    ext_state_3_feature.pNext = &shobject_feature
+
+    ext_state_2_feature : vk.PhysicalDeviceExtendedDynamicState2FeaturesEXT
+    ext_state_2_feature.sType = .PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT
+    ext_state_2_feature.extendedDynamicState2 = true
+    ext_state_2_feature.extendedDynamicState2LogicOp = true
+    ext_state_2_feature.pNext = &ext_state_3_feature
+
+    extended_dynamic_feature : vk.PhysicalDeviceExtendedDynamicStateFeaturesEXT
+    extended_dynamic_feature.sType = .PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT
+    extended_dynamic_feature.extendedDynamicState = true
+    extended_dynamic_feature.pNext = &ext_state_2_feature
+
+    desc_indexing_feature : vk.PhysicalDeviceDescriptorIndexingFeaturesEXT
+    desc_indexing_feature.sType = .PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT
+    desc_indexing_feature.descriptorBindingUniformBufferUpdateAfterBind = true
+    desc_indexing_feature.descriptorBindingStorageBufferUpdateAfterBind = true
+    desc_indexing_feature.pNext = &extended_dynamic_feature
 
     // chain the features we need into the device creation
     dynamic_rendering_feature : vk.PhysicalDeviceDynamicRenderingFeatures
     dynamic_rendering_feature.sType = .PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES
     dynamic_rendering_feature.dynamicRendering = true
+    dynamic_rendering_feature.pNext = &desc_indexing_feature
 
     sync2_feature : vk.PhysicalDeviceSynchronization2Features
     sync2_feature.sType = .PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES

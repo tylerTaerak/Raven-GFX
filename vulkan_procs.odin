@@ -16,10 +16,15 @@ REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
     vk.KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
     vk.KHR_MULTIVIEW_EXTENSION_NAME,
-    vk.KHR_MAINTENANCE_2_EXTENSION_NAME
+    vk.KHR_MAINTENANCE_2_EXTENSION_NAME,
+    vk.EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+    vk.KHR_MAINTENANCE_3_EXTENSION_NAME,
+    vk.EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
+    vk.EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME,
+    vk.EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME
 }
 
-WINDOW_FLAGS : sdl.WindowFlags = {.VULKAN, .BORDERLESS, .RESIZABLE}
+WINDOW_FLAGS : sdl.WindowFlags = {.VULKAN, .BORDERLESS}
 
 _create_context             :: proc(window: ^core.Window) -> (^Backend_Context, bool) {
     return vulk.create_context(window, REQUIRED_DEVICE_EXTENSIONS)
@@ -55,7 +60,9 @@ _tick                       :: vulk.tick
 
 _create_fence               :: vulk.init_fence
 _wait_for_fence             :: vulk.wait_for_fence
+_wait_for_fences            :: vulk.wait_for_fences
 _reset_fence                :: vulk.reset_fence
+_reset_fences               :: vulk.reset_fences
 _destroy_fence              :: vulk.destroy_fence
 
 _create_command_set         :: vulk.create_command_set

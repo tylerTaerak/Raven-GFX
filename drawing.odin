@@ -3,7 +3,8 @@ package gfx
 import sdl "vendor:sdl3"
 
 Swapchain_Image :: struct {
-    index: u32,
+    image_index: u32,
+    frame_index: u32,
     image: Image
 }
 
@@ -17,7 +18,8 @@ acquire_swapchain_image :: proc(ctx: ^Context, fence_index: int) -> (image: Swap
     ctx.window.w = int(w)
     ctx.window.h = int(h)
 
-    image.index = index
+    image.image_index = index
+    image.frame_index = u32(fence_index)
     image.image.image = ctx.swapchain.images[index]
     image.image.view = ctx.swapchain.views[index]
     image.image.size = {u32(ctx.window.w), u32(ctx.window.h)}
@@ -26,5 +28,5 @@ acquire_swapchain_image :: proc(ctx: ^Context, fence_index: int) -> (image: Swap
 }
 
 present_swapchain_image :: proc(ctx: ^Context, image: ^Swapchain_Image) {
-    _present_image(ctx.backend, &ctx.swapchain, image.index, &ctx.swapchain.sync[image.index].render_finished)
+    _present_image(ctx.backend, &ctx.swapchain, image.image_index, &ctx.swapchain.sync[image.image_index].render_finished)
 }

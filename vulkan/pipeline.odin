@@ -67,8 +67,13 @@ Color_Blend_Config :: struct {
 create_pipeline :: proc(
         ctx : ^Context,
         cfg : Pipeline_Config) -> (pipeline: Pipeline, ok : bool = true) {
-    vertex_bin := os.read_entire_file_from_filename(cfg.vertex_shader_path) or_return
-    fragment_bin := os.read_entire_file_from_filename(cfg.fragment_shader_path) or_return
+    log.info("Reading shader files", cfg.vertex_shader_path, ",", cfg.fragment_shader_path)
+    vertex_bin, v_ok := os.read_entire_file(cfg.vertex_shader_path, context.temp_allocator)
+    fragment_bin, f_ok := os.read_entire_file(cfg.fragment_shader_path, context.temp_allocator)
+
+    ok = v_ok == .NONE && f_ok == .NONE
+
+    if !ok do return
 
     vertex_mod := _load_shader_module(ctx.device, vertex_bin) or_return
     fragment_mod := _load_shader_module(ctx.device, fragment_bin) or_return
@@ -116,6 +121,12 @@ create_pipeline :: proc(
     } else {
         append(&dynamic_states, vk.DynamicState.CULL_MODE)
         append(&dynamic_states, vk.DynamicState.FRONT_FACE)
+        append(&dynamic_states, vk.DynamicState.DEPTH_CLAMP_ENABLE_EXT)
+        append(&dynamic_states, vk.DynamicState.RASTERIZER_DISCARD_ENABLE)
+        append(&dynamic_states, vk.DynamicState.POLYGON_MODE_EXT)
+        append(&dynamic_states, vk.DynamicState.DEPTH_BIAS)
+        append(&dynamic_states, vk.DynamicState.DEPTH_BIAS_ENABLE)
+        append(&dynamic_states, vk.DynamicState.LINE_WIDTH)
     }
 
     defer if rasterizer != nil do free(rasterizer)
@@ -195,6 +206,9 @@ create_pipeline :: proc(
 
         color_blend.pAttachments = blend_state
     } else {
+        append(&dynamic_states, vk.DynamicState.LOGIC_OP_ENABLE_EXT)
+        append(&dynamic_states, vk.DynamicState.LOGIC_OP_EXT)
+        append(&dynamic_states, vk.DynamicState.COLOR_WRITE_MASK_EXT)
         append(&dynamic_states, vk.DynamicState.BLEND_CONSTANTS)
         append(&dynamic_states, vk.DynamicState.COLOR_BLEND_ENABLE_EXT)
         append(&dynamic_states, vk.DynamicState.COLOR_BLEND_EQUATION_EXT)

@@ -80,9 +80,6 @@ create_buffer :: proc(
 
     vk.BindBufferMemory(ctx.device, buf.buf, buf.mem, 0)
 
-    // this is just for staging buffers that need host coherent memory
-    // vk.MapMemory(ctx.device, buf.staging_mem, 0, staging_mem_req.size, {}, &buf.host_data)
-
     return
 }
 
@@ -91,7 +88,7 @@ create_host_buffer :: proc(
     $T: typeid,
     element_count: int,
     queue_families : []QueueFamily,
-    usage_flags: vk.BufferUsageFlags, // this might be able to just be TRANSFER_SRC... we'll see if we need the ability to change this later
+    usage_flags: vk.BufferUsageFlags,
     ) -> (buf: Host_Buffer(T)) {
 
     buf.internal_buffer = create_buffer(ctx, T, element_count, queue_families, usage_flags, {.HOST_VISIBLE, .HOST_COHERENT})

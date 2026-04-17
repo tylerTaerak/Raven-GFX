@@ -126,8 +126,12 @@ _get_swapchain_support :: proc(ctx : ^Context) -> (support : SwapchainSupport, o
     format_count : u32
     vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.phys_dev, ctx.window_surface, &format_count, nil)
 
+    log.info("Found", format_count, "color formats for physical device")
+
     support.formats = make([]vk.SurfaceFormatKHR, format_count)
     vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.phys_dev, ctx.window_surface, &format_count, &support.formats[0])
+
+    log.info("PHysical device formats:", support.formats)
 
     pm_count : u32
     vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.phys_dev, ctx.window_surface, &pm_count, nil)
@@ -145,12 +149,15 @@ _get_swapchain_support :: proc(ctx : ^Context) -> (support : SwapchainSupport, o
 
 _pick_swap_surface_format :: proc(sc_support : SwapchainSupport) -> (format : vk.SurfaceFormatKHR) {
     format = sc_support.formats[0]
+    log.info("available swapchain formats:", sc_support.formats)
     for available_format in sc_support.formats {
-        if available_format.format == .R8G8B8A8_SRGB && available_format.colorSpace == .SRGB_NONLINEAR {
+        if available_format.format == .R8G8B8A8_UNORM && available_format.colorSpace == .SRGB_NONLINEAR {
             format = available_format
             break
         }
     }
+
+    log.info("Picking swapchain color format: ", format)
 
     return
 }

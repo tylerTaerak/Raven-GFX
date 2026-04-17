@@ -49,7 +49,7 @@ create_context :: proc(window: ^gfx_core.Window, vulkan_extensions: []string) ->
 
     log.info("Created queue family properties")
 
-    create_logical_device(ctx, {.GRAPHICS, .COMPUTE, .TRANSFER}) or_return // just assume these queue types
+    create_logical_device(ctx, {.GRAPHICS, .COMPUTE, .TRANSFER}, vulkan_extensions) or_return // just assume these queue types
     log.info("Created logical device")
 
     return
@@ -68,7 +68,7 @@ acquire_next_image_index :: proc(ctx: ^Context, swapchain: ^$S/Swapchain($N), fe
     return
 }
 
-draw_rendering :: proc(cmd_buffer : vk.CommandBuffer, image: Render_Image) {
+draw_rendering :: proc(cmd_buffer : vk.CommandBuffer, pipeline: Pipeline, image: Render_Image) {
     color_barrier : vk.ImageMemoryBarrier2KHR
     color_barrier.sType = .IMAGE_MEMORY_BARRIER_2_KHR
     color_barrier.image = image.image
@@ -108,6 +108,55 @@ draw_rendering :: proc(cmd_buffer : vk.CommandBuffer, image: Render_Image) {
     info.pColorAttachments = &attachments[0]
 
     vk.CmdBeginRenderingKHR(cmd_buffer, &info)
+
+    vk.CmdBindPipeline(cmd_buffer, .GRAPHICS, pipeline.data)
+
+    vk.CmdSetRasterizerDiscardEnableEXT(cmd_buffer, false)
+    vk.CmdSetCullModeEXT(cmd_buffer, {})
+    vk.CmdSetFrontFaceEXT(cmd_buffer, .CLOCKWISE)
+    vk.CmdSetDepthTestEnableEXT(cmd_buffer, false)
+    vk.CmdSetDepthWriteEnableEXT(cmd_buffer, false)
+    vk.CmdSetDepthBiasEnableEXT(cmd_buffer, false)
+    vk.CmdSetStencilTestEnableEXT(cmd_buffer, false)
+    vk.CmdSetLineWidth(cmd_buffer, 1.0)
+    vk.CmdSetPolygonModeEXT(cmd_buffer, .FILL)
+
+    viewport : vk.Viewport
+    viewport.x = 0
+    viewport.y = 0
+    viewport.width = f32(image.size.x)
+    viewport.height = f32(image.size.y)
+    vk.CmdSetViewport(cmd_buffer, 0, 1, &viewport)
+
+    scissor : vk.Rect2D
+    scissor.offset = {0, 0}
+    scissor.extent = {image.size.x, image.size.y}
+    vk.CmdSetScissor(cmd_buffer, 0, 1, &scissor)
+
+    masks : []vk.ColorComponentFlags = {
+        {.R, .B, .G, .A}
+    }
+
+    vk.CmdSetColorWriteMaskEXT(cmd_buffer, 0, 1, &masks[0])
+
+    enables : []b32 = {
+        true
+    }
+
+    vk.CmdSetColorBlendEnableEXT(cmd_buffer, 0, 1, &enables[0])
+
+    eqs : []vk.ColorBlendEquationEXT = {
+        {
+            srcColorBlendFactor = .SRC_COLOR,
+            srcAlphaBlendFactor = .SRC_COLOR,
+            dstColorBlendFactor = .ONE_MINUS_SRC_COLOR,
+            dstAlphaBlendFactor = .ONE_MINUS_SRC_COLOR
+        }
+    }
+
+    vk.CmdSetColorBlendEquationEXT(cmd_buffer, 0, 1, &eqs[0])
+
+    vk.CmdDraw(cmd_buffer, 3, 1, 0, 0)
 
     vk.CmdEndRenderingKHR(cmd_buffer)
 

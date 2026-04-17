@@ -4,6 +4,8 @@ import core "core"
 import sdl "vendor:sdl3"
 import "core:log"
 
+SHADERS_PATH :: #directory + "shaders/gen/practice/"
+
 FRAMES_IN_FLIGHT :: 3
 
 Frame_Sync :: struct {
@@ -18,7 +20,9 @@ Context :: struct {
     frame_index     : int,
     window          : core.Window,
     camera          : core.Camera,
-    main_cmd_set    : CommandSet
+    main_cmd_set    : CommandSet,
+    descriptors     : Descriptor_Set,
+    main_pipeline   : Pipeline
 }
 
 Core_Context : Context
@@ -50,21 +54,32 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
     Core_Context.main_cmd_set, ok = _create_command_set(Core_Context.backend, FRAMES_IN_FLIGHT, queue_fam^)
     
     log.info("initialized graphics context")
+
+    desc_cfg : Descriptor_Config
+    desc_cfg.count = 1
+    desc_cfg.type_count[.STORAGE] = 1
+    desc_cfg.type_count[.UNIFORM] = 1
+
+    Core_Context.descriptors = _create_descriptor_set(Core_Context.backend, desc_cfg) or_return
+
+    log.info("Initialized Descriptor Sets")
+
+    pipeline_cfg : Pipeline_Config
+    pipeline_cfg.vertex_shader_path = SHADERS_PATH + "vert.spv"
+    pipeline_cfg.fragment_shader_path = SHADERS_PATH + "frag.spv"
+    pipeline_cfg.descriptor_sets = Core_Context.descriptors
+    pipeline_cfg.color_formats = {.BGRA8_UNORM}
+    pipeline_cfg.topology = .TRIANGLE_LIST
+
+    Core_Context.main_pipeline = _create_pipeline(Core_Context.backend, pipeline_cfg) or_return
+
+    log.info("Created Default Pipeline")
+
     return
 }
 
-reload :: proc(cfg: Config) {
-    _wait_for_idle(Core_Context.backend)
-
-    core.update_window_data(&Core_Context.window, cfg.window_title, cfg.window_w, cfg.window_h)
-
-    // Core_Context.swapchain, _ = _create_swapchain(Core_Context.backend, FRAMES_IN_FLIGHT, &Core_Context.swapchain)
-
-    // destroy the old one now that we're finished with it
-    _destroy_swapchain(Core_Context.backend, &Core_Context.swapchain)
-}
-
 update :: proc() -> bool {
+    /** begin update() **/
     core.refresh_frame_events(&Core_Context.window)
 
     _wait_for_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
@@ -72,46 +87,51 @@ update :: proc() -> bool {
 
     screen_image, acquired := acquire_swapchain_image(&Core_Context, Core_Context.frame_index)
 
+    Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
+
     if !acquired {
         log.warn("Error acquiring swapchain image")
         return true
     }
+    /** end update() **/
 
-    // if core.check_resize_event(Core_Context.window) {
-    //     cfg : Config
-    //     cfg.window_title = Core_Context.window.title
-    //     cfg.window_w = Core_Context.window.w
-    //     cfg.window_h = Core_Context.window.h
+    /** begin in-flight draw commands **/
 
-    //     reload(cfg)
-    // }
+    _begin_command_buffer(Core_Context.main_cmd_set, int(screen_image.frame_index))
 
-    _begin_command_buffer(Core_Context.main_cmd_set, Core_Context.frame_index)
+    _draw(Core_Context.main_cmd_set.buffers[screen_image.frame_index], Core_Context.main_pipeline, screen_image.image)
 
-    _draw(Core_Context.main_cmd_set.buffers[Core_Context.frame_index], screen_image.image)
-
-    _end_command_buffer(Core_Context.main_cmd_set, Core_Context.frame_index)
+    _end_command_buffer(Core_Context.main_cmd_set, int(screen_image.frame_index))
 
     queue_fam, _ := _find_queue_family(Core_Context.backend, {.GRAPHICS})
 
     _submit_command_buffer(
         Core_Context.backend,
-        Core_Context.main_cmd_set.buffers[Core_Context.frame_index],
+        Core_Context.main_cmd_set.buffers[screen_image.frame_index],
         queue_fam^,
-        Core_Context.swapchain.sync[Core_Context.frame_index].image_acquired,
-        Core_Context.swapchain.sync[screen_image.index].render_finished,
-        Core_Context.swapchain.sync[Core_Context.frame_index].in_flight
+        Core_Context.swapchain.sync[screen_image.frame_index].image_acquired,
+        Core_Context.swapchain.sync[screen_image.image_index].render_finished,
+        Core_Context.swapchain.sync[screen_image.frame_index].in_flight
     )
 
-    present_swapchain_image(&Core_Context, &screen_image)
+    /** end in-flight draw commands -- these should all be stored, then processed before the end of frame, all wrapped in present() **/
 
-    Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
+    // although right now, it may make the most sense to just do everything single threaded and make sure that works, and then we can play around
+    // with a multithreaded job system later. I think that's an okay way to get started
+
+    /** begin end of frame - this will look like process all jobs and then present the image **/
+    present_swapchain_image(&Core_Context, &screen_image)
+    /** end end of frame **/
 
     return !core.check_quit_event(Core_Context.window)
 }
 
 shutdown :: proc() {
     _wait_for_idle(Core_Context.backend)
+
+    _destroy_pipeline(Core_Context.backend, &Core_Context.main_pipeline)
+
+    _destroy_descriptor_set(Core_Context.backend, &Core_Context.descriptors)
 
     _destroy_command_set(Core_Context.backend, &Core_Context.main_cmd_set)
 
