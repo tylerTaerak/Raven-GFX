@@ -185,24 +185,29 @@ submit_command_buffer :: proc(ctx: ^Context, cmd_buf : vk.CommandBuffer, queue: 
     submit_info : vk.SubmitInfo2KHR
     submit_info.sType = .SUBMIT_INFO_2_KHR
     submit_info.commandBufferInfoCount = 1
-    submit_info.waitSemaphoreInfoCount = 1
-    submit_info.signalSemaphoreInfoCount = 1
 
     cmd_info : vk.CommandBufferSubmitInfoKHR
     cmd_info.sType = .COMMAND_BUFFER_SUBMIT_INFO_KHR
     cmd_info.commandBuffer = cmd_buf
-
-    wait_info : vk.SemaphoreSubmitInfo
-    wait_info.sType = .SEMAPHORE_SUBMIT_INFO
-    wait_info.semaphore = wait_sem
-
-    sig_info : vk.SemaphoreSubmitInfo
-    sig_info.sType = .SEMAPHORE_SUBMIT_INFO
-    sig_info.semaphore = signal_sem
-
     submit_info.pCommandBufferInfos = &cmd_info
-    submit_info.pWaitSemaphoreInfos = &wait_info
-    submit_info.pSignalSemaphoreInfos = &sig_info
+
+    if wait_sem != 0 {
+        submit_info.waitSemaphoreInfoCount = 1
+
+        wait_info : vk.SemaphoreSubmitInfo
+        wait_info.sType = .SEMAPHORE_SUBMIT_INFO
+        wait_info.semaphore = wait_sem
+        submit_info.pWaitSemaphoreInfos = &wait_info
+    }
+
+    if signal_sem != 0 {
+        submit_info.signalSemaphoreInfoCount = 1
+
+        sig_info : vk.SemaphoreSubmitInfo
+        sig_info.sType = .SEMAPHORE_SUBMIT_INFO
+        sig_info.semaphore = signal_sem
+        submit_info.pSignalSemaphoreInfos = &sig_info
+    }
 
     vkq : vk.Queue
     vk.GetDeviceQueue(ctx.device, queue.family_idx, 0, &vkq)

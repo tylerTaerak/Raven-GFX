@@ -2,6 +2,7 @@ package gfx
 
 import core "core"
 import sdl "vendor:sdl3"
+import gvk "./vulkan"
 import "core:log"
 
 SHADERS_PATH :: #directory + "shaders/gen/practice/"
@@ -22,7 +23,8 @@ Context :: struct {
     camera          : core.Camera,
     main_cmd_set    : CommandSet,
     descriptors     : Descriptor_Set,
-    main_pipeline   : Pipeline
+    main_pipeline   : Pipeline,
+    assets          : Asset_Handler
 }
 
 Core_Context : Context
@@ -75,6 +77,10 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
 
     log.info("Created Default Pipeline")
 
+    Core_Context.assets = create_asset_handler() or_return
+
+    log.info("Created Asset Handler")
+
     return
 }
 
@@ -85,7 +91,7 @@ update :: proc() -> bool {
     _wait_for_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
     _reset_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
 
-    screen_image, acquired := acquire_swapchain_image(&Core_Context, Core_Context.frame_index)
+    screen_image, acquired := next_frame(&Core_Context, Core_Context.frame_index)
 
     Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
 
@@ -97,11 +103,11 @@ update :: proc() -> bool {
 
     /** begin in-flight draw commands **/
 
-    _begin_command_buffer(Core_Context.main_cmd_set, int(screen_image.frame_index))
+    buf := _begin_command_buffer(Core_Context.main_cmd_set, int(screen_image.frame_index))
 
     _draw(Core_Context.main_cmd_set.buffers[screen_image.frame_index], Core_Context.main_pipeline, screen_image.image)
 
-    _end_command_buffer(Core_Context.main_cmd_set, int(screen_image.frame_index))
+    _end_command_buffer(buf)
 
     queue_fam, _ := _find_queue_family(Core_Context.backend, {.GRAPHICS})
 
@@ -120,7 +126,7 @@ update :: proc() -> bool {
     // with a multithreaded job system later. I think that's an okay way to get started
 
     /** begin end of frame - this will look like process all jobs and then present the image **/
-    present_swapchain_image(&Core_Context, &screen_image)
+    present_frame(&Core_Context, screen_image)
     /** end end of frame **/
 
     return !core.check_quit_event(Core_Context.window)
@@ -128,6 +134,8 @@ update :: proc() -> bool {
 
 shutdown :: proc() {
     _wait_for_idle(Core_Context.backend)
+
+    destroy_asset_handler(&Core_Context.assets)
 
     _destroy_pipeline(Core_Context.backend, &Core_Context.main_pipeline)
 

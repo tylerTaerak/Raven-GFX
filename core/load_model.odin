@@ -135,7 +135,6 @@ _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
     defer delete(temp_buffer)
     
     log.infof("copying %d bytes to temp buffer", acc.buffer_view.buffer.size)
-    log.info(len(temp_buffer))
     mem.copy(raw_data(temp_buffer), acc.buffer_view.buffer.data, int(acc.buffer_view.buffer.size))
 
     view_data := temp_buffer[acc.buffer_view.offset:acc.buffer_view.offset + acc.buffer_view.size]

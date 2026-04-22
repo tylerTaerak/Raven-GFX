@@ -55,6 +55,8 @@ create_buffer :: proc(
     
     vk.CreateBuffer(ctx.device, &create_info, {}, &buf.buf)
 
+    initial_capacity := element_count * size_of(T)
+
     buf.size = vk.DeviceSize(initial_capacity)
 
     mem_req : vk.MemoryRequirements
@@ -102,9 +104,12 @@ create_host_buffer :: proc(
 make_slice_from_indicies :: proc(buffer: ^$T/Buffer($E), start, end: int) -> (slice : Buffer_Slice(E)) {
     assert(end > start)
 
-    size := vk.DeviceSize(end - start)
+    dev_start := start * size_of(E)
+    dev_end := end * size_of(E)
 
-    slice = make_slice_from_size_and_offset(buffer, vk.DeviceSize(start), size)
+    size := vk.DeviceSize(dev_end - dev_start)
+
+    slice = make_slice_from_size_and_offset(buffer, vk.DeviceSize(dev_start), size)
 
     return
 }
@@ -155,11 +160,11 @@ copy_buffer_data :: proc(command_buf: vk.CommandBuffer, src, dest: ^$T/Buffer_Sl
     copy_info.dstOffset = dest.offset
     copy_info.size = dest.size
 
-    vk.CmdCopyBUffer(command_buf, src.buffer.buf, dest.buffer.buf, 1, &copy_info)
+    vk.CmdCopyBuffer(command_buf, src.buffer.buf, dest.buffer.buf, 1, &copy_info)
 }
 
 destroy_host_buffer :: proc(ctx: ^Context, buffer: $T/Host_Buffer($E)) {
-    destroy_buffer(buffer.internal_buffer)
+    destroy_buffer(ctx, buffer.internal_buffer)
 }
 
 destroy_buffer :: proc(ctx: ^Context, buffer: $T/Buffer($E)) {

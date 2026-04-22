@@ -35,13 +35,15 @@ destroy_command_set :: proc(ctx: ^Context, set: ^Command_Set) {
     vk.DestroyCommandPool(ctx.device, set.pool, {})
 }
 
-begin_command_buffer :: proc(cmd_set : Command_Set, index : int) {
+begin_command_buffer :: proc(cmd_set : Command_Set, index : int) -> vk.CommandBuffer{
     info : vk.CommandBufferBeginInfo
     info.sType = .COMMAND_BUFFER_BEGIN_INFO
 
     vk.BeginCommandBuffer(cmd_set.buffers[index], &info)
+
+    return cmd_set.buffers[index]
 }
 
-end_command_buffer :: proc(cmd_set : Command_Set, index : int) {
-    vk.EndCommandBuffer(cmd_set.buffers[index])
+end_command_buffer :: proc(buff : vk.CommandBuffer) {
+    vk.EndCommandBuffer(buff)
 }
