@@ -84,6 +84,65 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
     return
 }
 
+/**
+  So what I'm imagining for the API now is something like:
+
+    next_frame : Frame
+
+    for next_frame = update(next_frame) {
+        // do update and drawing
+    }
+
+    where we kind of invert the loop and do basically:
+
+    update(frame) {
+        present(frame)
+
+        if quit do return {}, false
+
+        return next_frame()
+    }
+
+    And we can just check that a valid frame was passed to present() so we don't draw to a null image
+    We'd be beginning the primary command buffer at the end of update with next_frame, and ending it with
+    present()
+  */
+
+next_frame :: proc() -> (screen_image : Frame, ok : bool = true){
+    if core.check_quit_event(Core_Context.window) {
+        ok = false
+        return
+    }
+
+    core.refresh_frame_events(&Core_Context.window)
+
+    _wait_for_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
+    _reset_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
+
+    acquired : bool
+    screen_image, acquired = get_next_frame(&Core_Context, Core_Context.frame_index)
+
+    Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
+
+    if !acquired {
+        log.warn("Error acquiring swapchain image")
+    }
+
+    // likewise, this would be a good place to begin the command buffer
+
+    return
+}
+
+present :: proc(frame: Frame) {
+    if frame.image.image == 0 {
+        // don't try to render a null frame
+        return
+    }
+
+    // this would probably also be a good place to submit the primary command buffer
+    present_frame(&Core_Context, frame)
+}
+
 update :: proc() -> bool {
     /** begin update() **/
     core.refresh_frame_events(&Core_Context.window)
@@ -91,7 +150,7 @@ update :: proc() -> bool {
     _wait_for_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
     _reset_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
 
-    screen_image, acquired := next_frame(&Core_Context, Core_Context.frame_index)
+    screen_image, acquired := get_next_frame(&Core_Context, Core_Context.frame_index)
 
     Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
 

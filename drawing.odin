@@ -51,7 +51,7 @@ Draw_Text :: struct {
     // font (maybe) -- not sure if the font should be something set with the context or not
 }
 
-next_frame :: proc(ctx: ^Context, fence_index: int) -> (image: Frame, ok : bool = true) {
+get_next_frame :: proc(ctx: ^Context, fence_index: int) -> (image: Frame, ok : bool = true) {
     index : u32
     index, ok = gvk.acquire_next_image_index(ctx.backend, &ctx.swapchain, 0, ctx.swapchain.sync[fence_index].image_acquired)
 

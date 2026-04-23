@@ -76,6 +76,8 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
             for &attr in primitive.attributes {
                 accessor := attr.data
 
+                log.info(attr.type)
+
                 byte_buffer := _make_bytes_from_accessor(accessor)
                 defer delete(byte_buffer)
 
@@ -128,8 +130,10 @@ load_model :: proc {load_models_from_file, load_models_from_bytes}
 
 @(private)
 _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
+    log.info(acc.component_type)
     component_size := cgltf.component_size(acc.component_type)
     num_components := cgltf.num_components(acc.type)
+    log.info(num_components)
 
     temp_buffer := make([]byte, acc.buffer_view.buffer.size)
     defer delete(temp_buffer)
@@ -157,6 +161,8 @@ _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
 
         copy(data[i * element_size:(i + 1) * element_size], byte_data)
     }
+
+    log.infof("Wrote data of type %d * %d of size %d (%d elements)", num_components, component_size, len(data), acc.count)
 
     return
 }
