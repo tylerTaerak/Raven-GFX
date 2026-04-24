@@ -12,7 +12,7 @@ Model_Data :: struct {
 }
 
 Primitive_Data :: struct {
-    indices : []u32,
+    indices : []u16,
     descriptor_data : [Descriptor_Data_Type][]byte,
     vertex_count : u32
     // material data too
@@ -76,8 +76,6 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
             for &attr in primitive.attributes {
                 accessor := attr.data
 
-                log.info(attr.type)
-
                 byte_buffer := _make_bytes_from_accessor(accessor)
                 defer delete(byte_buffer)
 
@@ -105,7 +103,7 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
             // be used to load the bytes
 
             primitive : Primitive_Data
-            primitive.indices = _convert_bytes_to_u32s(vert_idx_data)
+            primitive.indices = _convert_bytes_to_u16s(vert_idx_data)
             primitive.descriptor_data = descriptor_data
             primitive.vertex_count = vertex_count
 
@@ -130,15 +128,12 @@ load_model :: proc {load_models_from_file, load_models_from_bytes}
 
 @(private)
 _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
-    log.info(acc.component_type)
     component_size := cgltf.component_size(acc.component_type)
     num_components := cgltf.num_components(acc.type)
-    log.info(num_components)
 
     temp_buffer := make([]byte, acc.buffer_view.buffer.size)
     defer delete(temp_buffer)
     
-    log.infof("copying %d bytes to temp buffer", acc.buffer_view.buffer.size)
     mem.copy(raw_data(temp_buffer), acc.buffer_view.buffer.data, int(acc.buffer_view.buffer.size))
 
     view_data := temp_buffer[acc.buffer_view.offset:acc.buffer_view.offset + acc.buffer_view.size]
@@ -168,18 +163,16 @@ _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
 }
 
 @(private)
-_convert_bytes_to_u32s :: proc(bytes : []byte) -> (data : []u32) {
-    assert(len(bytes) % 4 == 0)
-    data = make([]u32, len(bytes) / 4)
+_convert_bytes_to_u16s :: proc(bytes : []byte) -> (data : []u16) {
+    assert(len(bytes) % 2 == 0)
+    data = make([]u16, len(bytes) / 2)
 
     for i in 0..<len(data) {
-        datum : u32
-        subslice := bytes[i * 4:(i+1) * 4]
+        datum : u16
+        subslice := bytes[i * 2:(i+1) * 2]
 
-        datum = u32(subslice[0])
-        datum |= u32(subslice[1]) << 8
-        datum |= u32(subslice[2]) << 16
-        datum |= u32(subslice[3]) << 24
+        datum = u16(subslice[0])
+        datum |= u16(subslice[1]) << 8
 
         data[i] = datum
     }

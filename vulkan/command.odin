@@ -1,6 +1,7 @@
 package game_vulkan
 
 import vk "vendor:vulkan"
+import "core:log"
 
 Command_Set :: struct {
     pool : vk.CommandPool,
@@ -39,7 +40,11 @@ begin_command_buffer :: proc(cmd_set : Command_Set, index : int) -> vk.CommandBu
     info : vk.CommandBufferBeginInfo
     info.sType = .COMMAND_BUFFER_BEGIN_INFO
 
-    vk.BeginCommandBuffer(cmd_set.buffers[index], &info)
+    res := vk.BeginCommandBuffer(cmd_set.buffers[index], &info)
+
+    if res != .SUCCESS {
+        log.info("ERROR BEGINNING COMMAND BUFFER: ", res)
+    }
 
     return cmd_set.buffers[index]
 }

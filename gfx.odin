@@ -3,6 +3,7 @@ package gfx
 import core "core"
 import sdl "vendor:sdl3"
 import gvk "./vulkan"
+import vk "vendor:vulkan"
 import "core:log"
 
 SHADERS_PATH :: #directory + "shaders/gen/practice/"
@@ -23,8 +24,11 @@ Context :: struct {
     camera          : core.Camera,
     main_cmd_set    : CommandSet,
     descriptors     : Descriptor_Set,
-    main_pipeline   : Pipeline,
-    assets          : Asset_Handler
+    main_shaders    : Graphics_Shader,
+    assets          : Asset_Handler,
+    current_frame   : Frame,
+    draw_commands   : gvk.Host_Buffer(vk.DrawIndexedIndirectCommand),
+    draws           : Draw_Map
 }
 
 Core_Context : Context
@@ -66,20 +70,29 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
 
     log.info("Initialized Descriptor Sets")
 
-    pipeline_cfg : Pipeline_Config
-    pipeline_cfg.vertex_shader_path = SHADERS_PATH + "vert.spv"
-    pipeline_cfg.fragment_shader_path = SHADERS_PATH + "frag.spv"
-    pipeline_cfg.descriptor_sets = Core_Context.descriptors
-    pipeline_cfg.color_formats = {.BGRA8_UNORM}
-    pipeline_cfg.topology = .TRIANGLE_LIST
+    vert_cfg : gvk.Shader_Config
+    vert_cfg.filename = SHADERS_PATH + "vert.spv"
+    vert_cfg.shader_name = "main"
+    vert_cfg.stage = .VERTEX
+    vert_cfg.descriptors = Core_Context.descriptors
 
-    Core_Context.main_pipeline = _create_pipeline(Core_Context.backend, pipeline_cfg) or_return
+    frag_cfg : gvk.Shader_Config
+    frag_cfg.filename = SHADERS_PATH + "frag.spv"
+    frag_cfg.shader_name = "main"
+    frag_cfg.stage = .FRAGMENT
+    frag_cfg.descriptors = Core_Context.descriptors
 
-    log.info("Created Default Pipeline")
+    Core_Context.main_shaders.vertex = gvk.create_shader(Core_Context.backend, &vert_cfg) or_return
+    Core_Context.main_shaders.fragment = gvk.create_shader(Core_Context.backend, &frag_cfg) or_return
+
+    log.info("Created Default Shader Objects")
 
     Core_Context.assets = create_asset_handler() or_return
 
     log.info("Created Asset Handler")
+
+    fam := gvk.find_queue_family_by_type(Core_Context.backend, {.TRANSFER}) or_return
+    Core_Context.draw_commands = gvk.create_host_buffer(Core_Context.backend, vk.DrawIndexedIndirectCommand, 2048000, {fam^}, {.INDIRECT_BUFFER})
 
     return
 }
@@ -108,16 +121,11 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
     present()
   */
 
-next_frame :: proc() -> (screen_image : Frame, ok : bool = true){
-    if core.check_quit_event(Core_Context.window) {
-        ok = false
-        return
-    }
-
-    core.refresh_frame_events(&Core_Context.window)
-
+next_frame :: proc() -> (screen_image : Frame) {
     _wait_for_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
     _reset_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
+
+    clear_map(&Core_Context.draws)
 
     acquired : bool
     screen_image, acquired = get_next_frame(&Core_Context, Core_Context.frame_index)
@@ -126,9 +134,34 @@ next_frame :: proc() -> (screen_image : Frame, ok : bool = true){
 
     if !acquired {
         log.warn("Error acquiring swapchain image")
+        screen_image.image.image = 0 // deliberately set to 0
+        return
     }
 
-    // likewise, this would be a good place to begin the command buffer
+    Core_Context.current_frame = screen_image
+
+    vk.ResetCommandBuffer(Core_Context.main_cmd_set.buffers[screen_image.frame_index], {})
+    buf := _begin_command_buffer(Core_Context.main_cmd_set, int(screen_image.frame_index))
+
+    color_barrier : vk.ImageMemoryBarrier2KHR
+    color_barrier.sType = .IMAGE_MEMORY_BARRIER_2_KHR
+    color_barrier.image = screen_image.image.image
+    color_barrier.oldLayout = .UNDEFINED
+    color_barrier.newLayout = .COLOR_ATTACHMENT_OPTIMAL
+    color_barrier.subresourceRange.aspectMask = {.COLOR}
+    color_barrier.subresourceRange.layerCount = 1
+    color_barrier.subresourceRange.levelCount = 1
+    color_barrier.srcAccessMask = {}
+    color_barrier.srcStageMask = {}
+    color_barrier.dstStageMask = {.COLOR_ATTACHMENT_OUTPUT_KHR}
+    color_barrier.dstAccessMask = {.COLOR_ATTACHMENT_WRITE}
+
+    dependencies : vk.DependencyInfoKHR
+    dependencies.sType = .DEPENDENCY_INFO_KHR
+    dependencies.imageMemoryBarrierCount = 1
+    dependencies.pImageMemoryBarriers = &color_barrier
+
+    vk.CmdPipelineBarrier2KHR(buf, &dependencies)
 
     return
 }
@@ -139,64 +172,70 @@ present :: proc(frame: Frame) {
         return
     }
 
-    // this would probably also be a good place to submit the primary command buffer
-    present_frame(&Core_Context, frame)
-}
+    draw_count := write_draw_command_buffer(Core_Context.draws, &Core_Context.draw_commands)
 
-update :: proc() -> bool {
-    /** begin update() **/
-    core.refresh_frame_events(&Core_Context.window)
+    commit_draw_commands(Core_Context.main_cmd_set.buffers[frame.frame_index], Core_Context.draw_commands, draw_count, Core_Context.draws)
 
-    _wait_for_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
-    _reset_fence(Core_Context.backend, &Core_Context.swapchain.sync[Core_Context.frame_index].in_flight)
+    present_barrier : vk.ImageMemoryBarrier2KHR
+    present_barrier.sType = .IMAGE_MEMORY_BARRIER_2_KHR
+    present_barrier.image = frame.image.image
+    present_barrier.oldLayout = .COLOR_ATTACHMENT_OPTIMAL
+    present_barrier.newLayout = .PRESENT_SRC_KHR
+    present_barrier.subresourceRange.aspectMask = {.COLOR}
+    present_barrier.subresourceRange.layerCount = 1
+    present_barrier.subresourceRange.levelCount = 1
+    present_barrier.srcStageMask = {.COLOR_ATTACHMENT_OUTPUT_KHR}
+    present_barrier.srcAccessMask = {.COLOR_ATTACHMENT_WRITE}
+    present_barrier.dstStageMask = {}
+    present_barrier.dstAccessMask = {}
 
-    screen_image, acquired := get_next_frame(&Core_Context, Core_Context.frame_index)
+    dependencies : vk.DependencyInfo
+    dependencies.sType = .DEPENDENCY_INFO_KHR
+    dependencies.imageMemoryBarrierCount = 1
+    dependencies.pImageMemoryBarriers = &present_barrier
 
-    Core_Context.frame_index = (Core_Context.frame_index + 1) % FRAMES_IN_FLIGHT
+    vk.CmdPipelineBarrier2KHR(Core_Context.main_cmd_set.buffers[frame.frame_index], &dependencies)
 
-    if !acquired {
-        log.warn("Error acquiring swapchain image")
-        return true
-    }
-    /** end update() **/
-
-    /** begin in-flight draw commands **/
-
-    buf := _begin_command_buffer(Core_Context.main_cmd_set, int(screen_image.frame_index))
-
-    _draw(Core_Context.main_cmd_set.buffers[screen_image.frame_index], Core_Context.main_pipeline, screen_image.image)
-
-    _end_command_buffer(buf)
+    _end_command_buffer(Core_Context.main_cmd_set.buffers[frame.frame_index])
 
     queue_fam, _ := _find_queue_family(Core_Context.backend, {.GRAPHICS})
 
     _submit_command_buffer(
         Core_Context.backend,
-        Core_Context.main_cmd_set.buffers[screen_image.frame_index],
+        Core_Context.main_cmd_set.buffers[frame.frame_index],
         queue_fam^,
-        Core_Context.swapchain.sync[screen_image.frame_index].image_acquired,
-        Core_Context.swapchain.sync[screen_image.image_index].render_finished,
-        Core_Context.swapchain.sync[screen_image.frame_index].in_flight
+        Core_Context.swapchain.sync[frame.frame_index].image_acquired,
+        Core_Context.swapchain.sync[frame.image_index].render_finished,
+        Core_Context.swapchain.sync[frame.frame_index].in_flight
     )
 
-    /** end in-flight draw commands -- these should all be stored, then processed before the end of frame, all wrapped in present() **/
+    // this would probably also be a good place to submit the primary command buffer
+    present_frame(&Core_Context, frame)
+}
 
-    // although right now, it may make the most sense to just do everything single threaded and make sure that works, and then we can play around
-    // with a multithreaded job system later. I think that's an okay way to get started
+update :: proc() -> bool {
+    present(Core_Context.current_frame)
 
-    /** begin end of frame - this will look like process all jobs and then present the image **/
-    present_frame(&Core_Context, screen_image)
-    /** end end of frame **/
 
-    return !core.check_quit_event(Core_Context.window)
+    core.refresh_frame_events(&Core_Context.window)
+    if core.check_quit_event(Core_Context.window) {
+        return false
+    }
+
+    Core_Context.current_frame = next_frame()
+
+    return true
 }
 
 shutdown :: proc() {
     _wait_for_idle(Core_Context.backend)
 
+    gvk.destroy_host_buffer(Core_Context.backend, Core_Context.draw_commands)
+
     destroy_asset_handler(&Core_Context.assets)
 
-    _destroy_pipeline(Core_Context.backend, &Core_Context.main_pipeline)
+    gvk.destroy_shader(Core_Context.backend, Core_Context.main_shaders.vertex)
+    gvk.destroy_shader(Core_Context.backend, Core_Context.main_shaders.fragment)
 
     _destroy_descriptor_set(Core_Context.backend, &Core_Context.descriptors)
 

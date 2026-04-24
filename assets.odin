@@ -9,6 +9,10 @@ import "core:mem"
 MAX_VERTICES :: 2_048_000
 
 Model_Chunk :: struct {
+    // offsets for GPU buffers
+    vertex_offset   : u32,
+    index_offset    : u32,
+
     // number of draws to run
     vertex_count    : u32,
     index_count     : u32,
@@ -93,7 +97,7 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
     handler.desc_tangents.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST}, {.DEVICE_LOCAL})
     handler.desc_tangents.host_mem = gvk.create_host_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
-    handler.index_buffer = gvk.create_host_buffer(Core_Context.backend, u32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC, .TRANSFER_DST})
+    handler.index_buffer = gvk.create_host_buffer(Core_Context.backend, u32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC, .TRANSFER_DST, .INDEX_BUFFER})
 
     handler.write_fence = gvk.init_fence(Core_Context.backend)
 
@@ -133,6 +137,9 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
 
         for prim in model.primitives {
             chunk : Model_Chunk
+
+            chunk.vertex_offset = handler.vertex_offset
+            chunk.index_offset = handler.index_offset
 
             chunk.vertex_count = prim.vertex_count
             chunk.index_count  = u32(len(prim.indices))

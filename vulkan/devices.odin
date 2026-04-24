@@ -171,13 +171,14 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes, vulkan_extensi
     nested_buffers_feature.nestedCommandBufferSimultaneousUse = true
     nested_buffers_feature.nestedCommandBufferRendering = true
 
-    features : vk.PhysicalDeviceFeatures2
-    features.sType = .PHYSICAL_DEVICE_FEATURES_2
-    features.pNext = &nested_buffers_feature
+    features2 : vk.PhysicalDeviceFeatures2
+    features2.sType = .PHYSICAL_DEVICE_FEATURES_2
+    features2.pNext = &nested_buffers_feature
+    features2.features.multiDrawIndirect = true
 
     create_info : vk.DeviceCreateInfo
     create_info.sType = .DEVICE_CREATE_INFO
-    create_info.pNext = &features
+    create_info.pNext = &features2
 
     create_info.pQueueCreateInfos = &q_create_infos[0]
     create_info.queueCreateInfoCount = u32(len(q_create_infos))

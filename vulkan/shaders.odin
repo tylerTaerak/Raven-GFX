@@ -1,6 +1,7 @@
 package game_vulkan
 
 import "core:os"
+import "core:log"
 import "../core"
 import vk "vendor:vulkan"
 import "core:strings"
@@ -36,7 +37,7 @@ stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
     return .VERTEX
 }
 
-create_shader :: proc(ctx : ^Context, cfg : Shader_Config) -> (shader : Shader, ok : bool = true) {
+create_shader :: proc(ctx : ^Context, cfg : ^Shader_Config) -> (shader : Shader, ok : bool = true) {
     shader_code, err := os.read_entire_file(cfg.filename, context.temp_allocator)
 
     if (err != .NONE)
@@ -45,7 +46,11 @@ create_shader :: proc(ctx : ^Context, cfg : Shader_Config) -> (shader : Shader, 
         return
     }
 
-    cname := strings.clone_to_cstring(cfg.filename)
+    log.info(cfg.descriptors.set_count)
+    log.info(len(cfg.descriptors.layout))
+    log.info(&cfg.descriptors.layout[0])
+
+    cname := strings.clone_to_cstring(cfg.shader_name)
     defer delete(cname)
 
     cinfo : vk.ShaderCreateInfoEXT
@@ -58,6 +63,12 @@ create_shader :: proc(ctx : ^Context, cfg : Shader_Config) -> (shader : Shader, 
     cinfo.pName = cname
     cinfo.setLayoutCount = u32(cfg.descriptors.set_count)
     cinfo.pSetLayouts = &cfg.descriptors.layout[0]
+
+    if cfg.stage == .VERTEX {
+        cinfo.nextStage = {.FRAGMENT}
+    }
+
+    log.info(cinfo)
 
     res := vk.CreateShadersEXT(ctx.device, 1, &cinfo, {}, &shader.obj)
 
