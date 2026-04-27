@@ -35,9 +35,10 @@ void main() {
     mat4 instance_transform = model_matrices[gl_InstanceIndex];
     vec4 position = positions[gl_VertexIndex];
 
-    vec4 worldPosition = instance_transform * position;
-    vec4 viewPosition = view * worldPosition;
-    gl_Position = projection * viewPosition;
+    // vec4 worldPosition = instance_transform * position;
+    // vec4 viewPosition = view * worldPosition;
+    // gl_Position = projection * viewPosition;
+    gl_Position = instance_transform * position;
 
     fragColor = colors[gl_VertexIndex];
 }

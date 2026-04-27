@@ -82,24 +82,44 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
 
     handler.commands = gvk.create_command_set(Core_Context.backend, 1, fam^) or_return
 
-    handler.desc_positions.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST}, {.DEVICE_LOCAL})
+    handler.desc_positions.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
     handler.desc_positions.host_mem = gvk.create_host_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
-    handler.desc_texcoords.device_mem = gvk.create_buffer(Core_Context.backend, [2]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST}, {.DEVICE_LOCAL})
+    handler.desc_texcoords.device_mem = gvk.create_buffer(Core_Context.backend, [2]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
     handler.desc_texcoords.host_mem = gvk.create_host_buffer(Core_Context.backend, [2]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
-    handler.desc_colors.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST}, {.DEVICE_LOCAL})
+    handler.desc_colors.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
     handler.desc_colors.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
-    handler.desc_normals.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST}, {.DEVICE_LOCAL})
+    handler.desc_normals.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
     handler.desc_normals.host_mem = gvk.create_host_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
-    handler.desc_tangents.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST}, {.DEVICE_LOCAL})
+    handler.desc_tangents.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
     handler.desc_tangents.host_mem = gvk.create_host_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
     handler.index_buffer = gvk.create_host_buffer(Core_Context.backend, u32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC, .TRANSFER_DST, .INDEX_BUFFER})
 
     handler.write_fence = gvk.init_fence(Core_Context.backend)
+
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 0, handler.desc_positions.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 0, handler.desc_positions.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 0, handler.desc_positions.device_mem)
+
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 1, handler.desc_texcoords.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 1, handler.desc_texcoords.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 1, handler.desc_texcoords.device_mem)
+
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 2, handler.desc_colors.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 2, handler.desc_colors.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 2, handler.desc_colors.device_mem)
+
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 3, handler.desc_normals.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 3, handler.desc_normals.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 3, handler.desc_normals.device_mem)
+
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 4, handler.desc_tangents.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 4, handler.desc_tangents.device_mem)
+    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 4, handler.desc_tangents.device_mem)
 
     return
 }

@@ -56,6 +56,11 @@ create_vulkan_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
         }
     }
 
+    app_info : vk.ApplicationInfo
+    app_info.sType = .APPLICATION_INFO
+    app_info.pEngineName = cstring("Raven Graphics")
+    app_info.apiVersion = vk.API_VERSION_1_4
+
     create_info : vk.InstanceCreateInfo
     create_info.sType = .INSTANCE_CREATE_INFO
     if len(vk_layers) > 0 {
@@ -68,6 +73,7 @@ create_vulkan_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
     create_info.enabledExtensionCount = u32(len(vk_extensions))
     create_info.ppEnabledExtensionNames = &vk_extensions[0]
     create_info.flags = {}
+    create_info.pApplicationInfo = &app_info
 
     log.info(create_info.enabledLayerCount)
 

@@ -6,7 +6,7 @@ import gvk "./vulkan"
 import vk "vendor:vulkan"
 import "core:log"
 
-SHADERS_PATH :: #directory + "shaders/gen/practice/"
+SHADERS_PATH :: #directory + "shaders/gen/default_3d/"
 
 FRAMES_IN_FLIGHT :: 3
 
@@ -25,9 +25,11 @@ Context :: struct {
     main_cmd_set    : CommandSet,
     descriptors     : Descriptor_Set,
     main_shaders    : Graphics_Shader,
+    pipeline_layout : vk.PipelineLayout,
     assets          : Asset_Handler,
     current_frame   : Frame,
     draw_commands   : gvk.Host_Buffer(vk.DrawIndexedIndirectCommand),
+    instances       : [FRAMES_IN_FLIGHT]gvk.Host_Buffer(World_Transform),
     draws           : Draw_Map
 }
 
@@ -62,13 +64,23 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
     log.info("initialized graphics context")
 
     desc_cfg : Descriptor_Config
-    desc_cfg.count = 1
-    desc_cfg.type_count[.STORAGE] = 1
+    desc_cfg.count = FRAMES_IN_FLIGHT
+    desc_cfg.type_count[.STORAGE] = 6
     desc_cfg.type_count[.UNIFORM] = 1
 
     Core_Context.descriptors = _create_descriptor_set(Core_Context.backend, desc_cfg) or_return
 
     log.info("Initialized Descriptor Sets")
+
+    layout_info : vk.PipelineLayoutCreateInfo
+    layout_info.sType = .PIPELINE_LAYOUT_CREATE_INFO
+    layout_info.setLayoutCount = u32(len(Core_Context.descriptors.layout))
+    layout_info.pSetLayouts = &Core_Context.descriptors.layout[0]
+    layout_info.flags = {}
+
+    vk.CreatePipelineLayout(Core_Context.backend.device, &layout_info, {}, &Core_Context.pipeline_layout)
+
+    log.info("Created Pipeline Layout")
 
     vert_cfg : gvk.Shader_Config
     vert_cfg.filename = SHADERS_PATH + "vert.spv"
@@ -93,6 +105,11 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
 
     fam := gvk.find_queue_family_by_type(Core_Context.backend, {.TRANSFER}) or_return
     Core_Context.draw_commands = gvk.create_host_buffer(Core_Context.backend, vk.DrawIndexedIndirectCommand, 2048000, {fam^}, {.INDIRECT_BUFFER})
+
+    for i in 0..<FRAMES_IN_FLIGHT {
+        Core_Context.instances[i] = gvk.create_host_buffer(Core_Context.backend, World_Transform, 2048000, {fam^}, {.STORAGE_BUFFER, .TRANSFER_DST})
+        gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, u32(i), 5, Core_Context.instances[i].internal_buffer)
+    }
 
     return
 }
@@ -230,7 +247,12 @@ update :: proc() -> bool {
 shutdown :: proc() {
     _wait_for_idle(Core_Context.backend)
 
+    for i in 0..<FRAMES_IN_FLIGHT {
+        gvk.destroy_host_buffer(Core_Context.backend, Core_Context.instances[i])
+    }
     gvk.destroy_host_buffer(Core_Context.backend, Core_Context.draw_commands)
+
+    vk.DestroyPipelineLayout(Core_Context.backend.device, Core_Context.pipeline_layout, {})
 
     destroy_asset_handler(&Core_Context.assets)
 

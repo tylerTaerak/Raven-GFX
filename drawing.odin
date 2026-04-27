@@ -1,6 +1,7 @@
 #+feature dynamic-literals
 package gfx
 
+import "core:log"
 import "core:mem"
 import sdl "vendor:sdl3"
 import gvk "./vulkan"
@@ -99,6 +100,8 @@ write_draw_command_buffer :: proc(draw_commands : Draw_Map, dst_buffer : ^gvk.Ho
     commands : [dynamic]vk.DrawIndexedIndirectCommand
     defer delete(commands)
 
+    instances : [dynamic]World_Transform
+
     instance_offset : u32
     draw_count : u32
 
@@ -117,9 +120,12 @@ write_draw_command_buffer :: proc(draw_commands : Draw_Map, dst_buffer : ^gvk.Ho
 
             draw_count += 1
         }
+
+        append(&instances, ..tforms[:])
     }
 
     mem.copy(dst_buffer.data_ptr, raw_data(commands), len(commands) * size_of(vk.DrawIndexedIndirectCommand))
+    mem.copy(Core_Context.instances[Core_Context.frame_index].data_ptr, raw_data(instances), len(instances) * size_of(World_Transform))
 
     return draw_count
 }
@@ -220,6 +226,16 @@ commit_draw_commands :: proc(cmd_buf : vk.CommandBuffer, draw_commands : gvk.Hos
                 vk.CmdBindShadersEXT(cmd_buf, 1, &stage_flags, &s.shader.obj)
 
         }
+
+        bind_info : vk.BindDescriptorSetsInfo
+        bind_info.sType = .BIND_DESCRIPTOR_SETS_INFO
+        bind_info.descriptorSetCount = 1
+        bind_info.pDescriptorSets = &Core_Context.descriptors.set[0]
+        bind_info.stageFlags = {.VERTEX, .FRAGMENT, .COMPUTE}
+        bind_info.firstSet = 0
+        bind_info.layout = Core_Context.pipeline_layout
+
+        vk.CmdBindDescriptorSets2KHR(cmd_buf, &bind_info)
 
         vk.CmdBindIndexBuffer(cmd_buf, Core_Context.assets.index_buffer.internal_buffer.buf, 0, .UINT16)
 

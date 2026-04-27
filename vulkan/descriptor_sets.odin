@@ -1,5 +1,6 @@
 package game_vulkan
 
+import "core:log"
 import vk "vendor:vulkan"
 import "../core"
 
@@ -104,6 +105,38 @@ create_descriptor_set :: proc(ctx: ^Context, cfg: Descriptor_Config) -> (collect
     }
 
     return
+}
+
+update_descriptor_set :: proc(ctx: ^Context, set: ^Descriptor_Collection, set_index, binding : u32, buffer : $T/Buffer($E)) -> bool {
+    assert(set_index < u32(set.set_count) && binding < u32(set.binding_count))
+
+    update : vk.WriteDescriptorSet
+    buffer_info : vk.DescriptorBufferInfo
+
+    buffer_info.buffer = buffer.buf
+    buffer_info.offset = 0
+    buffer_info.range = buffer.size
+
+    update.sType = .WRITE_DESCRIPTOR_SET
+    update.dstSet = set.set[set_index]
+    update.dstBinding = binding
+    update.dstArrayElement = 0
+    update.descriptorCount = 1
+    update.pBufferInfo = &buffer_info
+
+    buffer_type : core.Descriptor_Type
+    for type in core.Descriptor_Type {
+        if set.type_count[type] < binding do continue
+
+        buffer_type = type
+        break
+    }
+
+    update.descriptorType = _to_vk_descriptor_type(buffer_type)
+
+    vk.UpdateDescriptorSets(ctx.device, 1, &update, 0, nil)
+
+    return true
 }
 
 update_descriptor_sets :: proc(ctx: ^Context, set: ^Descriptor_Collection, buffers: [][]$T/Buffer($E)) -> bool {

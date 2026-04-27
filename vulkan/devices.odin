@@ -110,7 +110,7 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes, vulkan_extensi
     for ext, i in vulkan_extensions {
         required_extensions_cstr[i] = strings.clone_to_cstring(ext)
     }
-
+    
     depth_clip_feature : vk.PhysicalDeviceDepthClipEnableFeaturesEXT
     depth_clip_feature.sType = .PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT
     depth_clip_feature.depthClipEnable = true
