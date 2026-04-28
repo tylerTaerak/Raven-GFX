@@ -78,9 +78,17 @@ create_buffer :: proc(
     buf_alloc_info.allocationSize = mem_req.size
     buf_alloc_info.memoryTypeIndex = buf_mem_idx
 
-    vk.AllocateMemory(ctx.device, &buf_alloc_info, {}, &buf.mem)
+    res := vk.AllocateMemory(ctx.device, &buf_alloc_info, {}, &buf.mem)
 
-    vk.BindBufferMemory(ctx.device, buf.buf, buf.mem, 0)
+    if res != .SUCCESS {
+        log.info("Error allocating buffer memory: ", res)
+    }
+
+    res = vk.BindBufferMemory(ctx.device, buf.buf, buf.mem, 0)
+
+    if res != .SUCCESS {
+        log.info("Error binding buffer memory: ", res)
+    }
 
     return
 }

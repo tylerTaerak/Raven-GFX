@@ -104,10 +104,10 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
     log.info("Created Asset Handler")
 
     fam := gvk.find_queue_family_by_type(Core_Context.backend, {.TRANSFER}) or_return
-    Core_Context.draw_commands = gvk.create_host_buffer(Core_Context.backend, vk.DrawIndexedIndirectCommand, 2048000, {fam^}, {.INDIRECT_BUFFER})
+    Core_Context.draw_commands = gvk.create_host_buffer(Core_Context.backend, vk.DrawIndexedIndirectCommand, 512000, {fam^}, {.INDIRECT_BUFFER})
 
     for i in 0..<FRAMES_IN_FLIGHT {
-        Core_Context.instances[i] = gvk.create_host_buffer(Core_Context.backend, World_Transform, 2048000, {fam^}, {.STORAGE_BUFFER, .TRANSFER_DST})
+        Core_Context.instances[i] = gvk.create_host_buffer(Core_Context.backend, World_Transform, 512000, {fam^}, {.STORAGE_BUFFER, .TRANSFER_DST})
         gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, u32(i), 5, Core_Context.instances[i].internal_buffer)
     }
 

@@ -6,7 +6,7 @@ import gvk "./vulkan"
 import "./core"
 import "core:mem"
 
-MAX_VERTICES :: 2_048_000
+MAX_VERTICES :: 512_000
 
 Model_Chunk :: struct {
     // offsets for GPU buffers
