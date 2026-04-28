@@ -33,7 +33,7 @@ layout(location = 0) out vec4 fragColor;
 
 void main() {
     mat4 instance_transform = model_matrices[gl_InstanceIndex];
-    vec4 position = positions[gl_VertexIndex];
+    vec4 position = vec4(positions[gl_VertexIndex]);//, 1.0);
 
     // vec4 worldPosition = instance_transform * position;
     // vec4 viewPosition = view * worldPosition;

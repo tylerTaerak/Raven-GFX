@@ -13,7 +13,7 @@ Model_Data :: struct {
 
 Primitive_Data :: struct {
     indices : []u16,
-    descriptor_data : [Descriptor_Data_Type][]byte,
+    descriptor_data : [Descriptor_Data_Type][]f32,
     vertex_count : u32
     // material data too
 }
@@ -60,7 +60,7 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
 
             vert_idx_data       : []byte
 
-            descriptor_data : [Descriptor_Data_Type][]byte
+            descriptor_data : [Descriptor_Data_Type][]f32
             indices_acc := primitive.indices
 
             {
@@ -75,6 +75,8 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
             vertex_count : u32
             for &attr in primitive.attributes {
                 accessor := attr.data
+                log.info("Loading data for ", attr.type)
+                log.info("byte stride: ", accessor.stride)
 
                 byte_buffer := _make_bytes_from_accessor(accessor)
                 defer delete(byte_buffer)
@@ -95,15 +97,19 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
                         core_type = .TANGENT
                 }
 
-                descriptor_data[core_type] = make([]byte, len(byte_buffer))
-                copy(descriptor_data[core_type], byte_buffer)
+                float_data := _convert_bytes(byte_buffer, f32)
+                float_data = _pad_to_vec4(float_data, int(cgltf.num_components(accessor.type)))
+
+                log.info("Padded data:", float_data)
+
+                descriptor_data[core_type] = float_data
             }
 
             // now we need to load the stuff into the GPU, I think having an externally defined loader proc should
             // be used to load the bytes
 
             primitive : Primitive_Data
-            primitive.indices = _convert_bytes_to_u16s(vert_idx_data)
+            primitive.indices = _convert_bytes(vert_idx_data, u16)
             primitive.descriptor_data = descriptor_data
             primitive.vertex_count = vertex_count
 
@@ -176,6 +182,55 @@ _convert_bytes_to_u16s :: proc(bytes : []byte) -> (data : []u16) {
 
         data[i] = datum
     }
+
+    return
+}
+
+@(private)
+_convert_bytes :: proc(bytes : []byte, $T: typeid) -> (data : []T) {
+    assert(len(bytes) % size_of(T) == 0)
+    data = make([]T, len(bytes) / size_of(T))
+
+    for i in 0..<len(data) {
+        datum : T
+        subslice := bytes[i * size_of(T):(i+1) * size_of(T)]
+
+        mem.copy(&datum, raw_data(subslice), len(subslice))
+
+        // for j in 0..<size_of(T) {
+        //     datum |= T(subslice[u32(j)]) << u32(j * 8)
+        // }
+
+        data[i] = datum
+    }
+
+    return
+}
+
+/// NOTE: Consumes the original slice
+@(private)
+_pad_to_vec4 :: proc(elements : []f32, count_per_element : int) -> (padded : []f32) {
+    assert(len(elements) % count_per_element == 0)
+
+    count := len(elements) / count_per_element
+
+    // we're turning everything into a vec4
+    padded = make([]f32, count * 4)
+
+    for i in 0..<count {
+        padded_start := i * 4
+        pre_start := i * count_per_element
+
+        for j in 0..<4 {
+            if j < count_per_element {
+                padded[padded_start + j] = elements[pre_start + j]
+            } else {
+                padded[padded_start + j] = 1.0
+            }
+        }
+    }
+
+    delete(elements)
 
     return
 }

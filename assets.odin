@@ -21,11 +21,11 @@ Model_Chunk :: struct {
     i_indices       : gvk.Buffer_Slice(u32),    
 
     // these buffers are all for descriptor sets
-    v_positions     : gvk.Buffer_Slice([3]f32),
-    v_texcoords     : gvk.Buffer_Slice([2]f32),
+    v_positions     : gvk.Buffer_Slice([4]f32),
+    v_texcoords     : gvk.Buffer_Slice([4]f32),
     v_colors        : gvk.Buffer_Slice([4]f32),
-    v_normals       : gvk.Buffer_Slice([3]f32),
-    v_tangents      : gvk.Buffer_Slice([3]f32),
+    v_normals       : gvk.Buffer_Slice([4]f32),
+    v_tangents      : gvk.Buffer_Slice([4]f32),
 }
 
 Model_Asset :: struct {
@@ -60,11 +60,11 @@ Asset_Handler :: struct {
     fonts       : [dynamic]Font_Asset,
 
     // buffers
-    desc_positions  : Shared_Buffer([3]f32),
-    desc_texcoords  : Shared_Buffer([2]f32),
+    desc_positions  : Shared_Buffer([4]f32),
+    desc_texcoords  : Shared_Buffer([4]f32),
     desc_colors     : Shared_Buffer([4]f32),
-    desc_normals    : Shared_Buffer([3]f32),
-    desc_tangents   : Shared_Buffer([3]f32),
+    desc_normals    : Shared_Buffer([4]f32),
+    desc_tangents   : Shared_Buffer([4]f32),
     index_buffer    : Host_Buffer(u32),
 
     // offsets
@@ -82,20 +82,20 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
 
     handler.commands = gvk.create_command_set(Core_Context.backend, 1, fam^) or_return
 
-    handler.desc_positions.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_positions.host_mem = gvk.create_host_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
+    handler.desc_positions.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
+    handler.desc_positions.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
-    handler.desc_texcoords.device_mem = gvk.create_buffer(Core_Context.backend, [2]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_texcoords.host_mem = gvk.create_host_buffer(Core_Context.backend, [2]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
+    handler.desc_texcoords.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
+    handler.desc_texcoords.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
     handler.desc_colors.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
     handler.desc_colors.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
-    handler.desc_normals.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_normals.host_mem = gvk.create_host_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
+    handler.desc_normals.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
+    handler.desc_normals.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
-    handler.desc_tangents.device_mem = gvk.create_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_tangents.host_mem = gvk.create_host_buffer(Core_Context.backend, [3]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
+    handler.desc_tangents.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
+    handler.desc_tangents.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
 
     handler.index_buffer = gvk.create_host_buffer(Core_Context.backend, u32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC, .TRANSFER_DST, .INDEX_BUFFER})
 
@@ -168,32 +168,38 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
             v_end := v_start + chunk.vertex_count
             i_start := handler.index_offset
 
+            log.info("Received position data:", prim.descriptor_data[.POSITION])
+
+            log.info("Copying", chunk.vertex_count, "vertices into GPU memory at vertex offset", chunk.vertex_offset)
+
             mem.copy(rawptr(uintptr(handler.index_buffer.data_ptr) + uintptr(i_start * size_of(u32))), raw_data(prim.indices), len(prim.indices) * size_of(u32))
 
             mem.copy(
-                rawptr(uintptr(handler.desc_positions.host_mem.data_ptr) + uintptr(v_start * size_of([3]f32))),
+                rawptr(uintptr(handler.desc_positions.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
                 raw_data(prim.descriptor_data[.POSITION]),
-                len(prim.descriptor_data[.POSITION]))
+                len(prim.descriptor_data[.POSITION]) * size_of(f32))
+
+            log.info("Copied", len(prim.descriptor_data[.POSITION]), "bytes starting at", v_start * size_of([4]f32))
 
             mem.copy(
-                rawptr(uintptr(handler.desc_texcoords.host_mem.data_ptr) + uintptr(v_start * size_of([2]f32))),
+                rawptr(uintptr(handler.desc_texcoords.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
                 raw_data(prim.descriptor_data[.TEXCOORD]),
-                len(prim.descriptor_data[.TEXCOORD]))
+                len(prim.descriptor_data[.TEXCOORD]) * size_of(f32))
 
             mem.copy(
                 rawptr(uintptr(handler.desc_colors.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
                 raw_data(prim.descriptor_data[.COLOR]),
-                len(prim.descriptor_data[.COLOR]))
+                len(prim.descriptor_data[.COLOR]) * size_of(f32))
 
             mem.copy(
-                rawptr(uintptr(handler.desc_normals.host_mem.data_ptr) + uintptr(v_start * size_of([3]f32))),
+                rawptr(uintptr(handler.desc_normals.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
                 raw_data(prim.descriptor_data[.NORMAL]),
-                len(prim.descriptor_data[.NORMAL]))
+                len(prim.descriptor_data[.NORMAL]) * size_of(f32))
 
             mem.copy(
-                rawptr(uintptr(handler.desc_tangents.host_mem.data_ptr) + uintptr(v_start * size_of([3]f32))),
+                rawptr(uintptr(handler.desc_tangents.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
                 raw_data(prim.descriptor_data[.TANGENT]),
-                len(prim.descriptor_data[.TANGENT]))
+                len(prim.descriptor_data[.TANGENT]) * size_of(f32))
 
             // add commands to command buffer to copy from the host buffer to the GPU buffer
 
