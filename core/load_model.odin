@@ -75,8 +75,6 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
             vertex_count : u32
             for &attr in primitive.attributes {
                 accessor := attr.data
-                log.info("Loading data for ", attr.type)
-                log.info("byte stride: ", accessor.stride)
 
                 byte_buffer := _make_bytes_from_accessor(accessor)
                 defer delete(byte_buffer)
@@ -100,8 +98,6 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
                 float_data := _convert_bytes(byte_buffer, f32)
                 float_data = _pad_to_vec4(float_data, int(cgltf.num_components(accessor.type)))
 
-                log.info("Padded data:", float_data)
-
                 descriptor_data[core_type] = float_data
             }
 
@@ -110,6 +106,7 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
 
             primitive : Primitive_Data
             primitive.indices = _convert_bytes(vert_idx_data, u16)
+            log.info("Indices of primitive: ", primitive.indices)
             primitive.descriptor_data = descriptor_data
             primitive.vertex_count = vertex_count
 
@@ -171,7 +168,7 @@ _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
 @(private)
 _convert_bytes_to_u16s :: proc(bytes : []byte) -> (data : []u16) {
     assert(len(bytes) % 2 == 0)
-    data = make([]u16, len(bytes) / 2)
+    data = make([]u16, len(bytes))
 
     for i in 0..<len(data) {
         datum : u16
@@ -181,6 +178,21 @@ _convert_bytes_to_u16s :: proc(bytes : []byte) -> (data : []u16) {
         datum |= u16(subslice[1]) << 8
 
         data[i] = datum
+    }
+
+    return
+}
+
+@(private)
+_pad_u16_to_4_bytes :: proc(ints : []u16) -> (data : []u16) {
+    data = make([]u16, len(ints) * 2)
+
+    for i in 0..<len(data) {
+        if i % 2 != 0 do continue
+
+        idx := i / 2
+
+        data[i] = ints[idx]
     }
 
     return

@@ -24,7 +24,7 @@ load_texture_from_filepath :: proc(filepath : string) -> (Image, bool) {
 // use vk.CmdCopyBufferToImage to move this data to the GPU
 load_texture_from_bytes :: proc(data : []byte) -> (Image, bool) {
     img, err := image.load_from_bytes(data)
-    if err != image.PNG_Error.None {
+    if err != nil {
         return {}, false
     }
 

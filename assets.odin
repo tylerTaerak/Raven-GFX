@@ -168,18 +168,15 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
             v_end := v_start + chunk.vertex_count
             i_start := handler.index_offset
 
-            log.info("Received position data:", prim.descriptor_data[.POSITION])
-
             log.info("Copying", chunk.vertex_count, "vertices into GPU memory at vertex offset", chunk.vertex_offset)
+            log.info("Copying", chunk.index_count, "indicies into GPU memory at offset", chunk.index_offset)
 
-            mem.copy(rawptr(uintptr(handler.index_buffer.data_ptr) + uintptr(i_start * size_of(u32))), raw_data(prim.indices), len(prim.indices) * size_of(u32))
+            mem.copy(rawptr(uintptr(handler.index_buffer.data_ptr) + uintptr(i_start * size_of(u16))), raw_data(prim.indices), len(prim.indices) * size_of(u16))
 
             mem.copy(
                 rawptr(uintptr(handler.desc_positions.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
                 raw_data(prim.descriptor_data[.POSITION]),
                 len(prim.descriptor_data[.POSITION]) * size_of(f32))
-
-            log.info("Copied", len(prim.descriptor_data[.POSITION]), "bytes starting at", v_start * size_of([4]f32))
 
             mem.copy(
                 rawptr(uintptr(handler.desc_texcoords.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
