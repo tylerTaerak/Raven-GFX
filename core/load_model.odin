@@ -106,7 +106,6 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
 
             primitive : Primitive_Data
             primitive.indices = _convert_bytes(vert_idx_data, u16)
-            log.info("Indices of primitive: ", primitive.indices)
             primitive.descriptor_data = descriptor_data
             primitive.vertex_count = vertex_count
 
