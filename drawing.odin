@@ -158,7 +158,7 @@ commit_draw_commands :: proc(cmd_buf : vk.CommandBuffer, draw_commands : gvk.Hos
         vk.CmdBeginRenderingKHR(cmd_buf, &info)
 
         vk.CmdSetRasterizerDiscardEnableEXT(cmd_buf, false)
-        vk.CmdSetCullModeEXT(cmd_buf, {})
+        vk.CmdSetCullModeEXT(cmd_buf, {.BACK})
         vk.CmdSetFrontFaceEXT(cmd_buf, .CLOCKWISE)
         vk.CmdSetDepthTestEnableEXT(cmd_buf, false)
         vk.CmdSetDepthWriteEnableEXT(cmd_buf, false)

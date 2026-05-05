@@ -67,11 +67,11 @@ init_fence :: proc(ctx: ^Context) -> (fence: Fence) {
 }
 
 wait_for_fence :: proc(ctx: ^Context, fence: ^Fence) {
-    vk.WaitForFences(ctx.device, 1, fence, true, 50_000)
+    vk.WaitForFences(ctx.device, 1, fence, true, 100_000)
 }
 
 wait_for_fences :: proc(ctx: ^Context, fences: []Fence) {
-    vk.WaitForFences(ctx.device, u32(len(fences)), &fences[0], true, 50_000);
+    vk.WaitForFences(ctx.device, u32(len(fences)), &fences[0], true, 100_000);
 }
 
 reset_fence :: proc(ctx: ^Context, fence: ^Fence) {

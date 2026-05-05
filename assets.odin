@@ -17,9 +17,6 @@ Model_Chunk :: struct {
     vertex_count    : u32,
     index_count     : u32,
 
-    // bind this buffer to the index buffer
-    i_indices       : gvk.Buffer_Slice(u32),    
-
     // these buffers are all for descriptor sets
     v_positions     : gvk.Buffer_Slice([4]f32),
     v_texcoords     : gvk.Buffer_Slice([4]f32),
@@ -35,6 +32,9 @@ Model_Asset :: struct {
 Model_Handle :: distinct u64
 
 Texture_Asset :: struct {
+    width : int,
+    height : int,
+    channel_count : int
 }
 
 Texture_Handle :: distinct u64
@@ -131,14 +131,7 @@ _copy_to_gpu :: proc(buffer : vk.CommandBuffer, data : ^$T/Shared_Buffer($E), be
     gvk.copy_buffer_data(buffer, &host_slice, &dev_slice)
 }
 
-load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Model_Handle) {
-    handle = Model_Handle(len(handler.models))
-
-    model_data := core.load_models_from_file(filepath)
-
-    _wait_for_fence(Core_Context.backend, &handler.write_fence)
-    _reset_fence(Core_Context.backend, &handler.write_fence)
-
+_cycle_semaphores :: proc(handler : ^Asset_Handler) {
     // delete the old last semaphore
     if handler.prev_write_sem != 0 {
         gvk.destroy_semaphore(Core_Context.backend, handler.prev_write_sem)
@@ -147,6 +140,17 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
     // cycle to next semaphores
     handler.prev_write_sem = handler.current_write_sem
     handler.current_write_sem = gvk.init_semaphore(Core_Context.backend)
+}
+
+load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Model_Handle) {
+    handle = Model_Handle(len(handler.models))
+
+    model_data := core.load_models_from_file(filepath)
+
+    _wait_for_fence(Core_Context.backend, &handler.write_fence)
+    _reset_fence(Core_Context.backend, &handler.write_fence)
+
+    _cycle_semaphores(handler)
 
     // open the GPU command buffer for submitting transfer work
     buf := gvk.begin_command_buffer(handler.commands, 0)
