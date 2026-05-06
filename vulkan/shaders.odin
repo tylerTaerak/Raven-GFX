@@ -7,17 +7,16 @@ import vk "vendor:vulkan"
 import "core:strings"
 
 Shader :: struct {
-    name    : string,
     stage   : core.Shader_Stage,
     obj     : vk.ShaderEXT
 }
 
 Shader_Config :: struct {
-    filename : string,
-    shader_name : string,
+    file : union{string, []byte},
+    entrypoint_name : string,
     stage : core.Shader_Stage,
     descriptors : Descriptor_Collection
-    // I don't think I'm using push constants anywhere
+    // I don't think I'm using push constants anywhere TODO)) yet... we'll be adding cameras etc. soon
 }
 
 stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
@@ -38,19 +37,26 @@ stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
 }
 
 create_shader :: proc(ctx : ^Context, cfg : ^Shader_Config) -> (shader : Shader, ok : bool = true) {
-    shader_code, err := os.read_entire_file(cfg.filename, context.temp_allocator)
-
-    if (err != .NONE)
-    {
-        ok = false
-        return
+    shader_code : []byte
+    switch file in cfg.file {
+        case string:
+            err : os.Error
+            shader_code, err = os.read_entire_file(file, context.temp_allocator)
+            if (err != .NONE)
+            {
+                ok = false
+                return
+            }
+        case []byte:
+            shader_code = file
     }
+
 
     log.info(cfg.descriptors.set_count)
     log.info(len(cfg.descriptors.layout))
     log.info(&cfg.descriptors.layout[0])
 
-    cname := strings.clone_to_cstring(cfg.shader_name)
+    cname := strings.clone_to_cstring(cfg.entrypoint_name)
     defer delete(cname)
 
     cinfo : vk.ShaderCreateInfoEXT
@@ -78,7 +84,6 @@ create_shader :: proc(ctx : ^Context, cfg : ^Shader_Config) -> (shader : Shader,
         return
     }
 
-    shader.name = cfg.shader_name
     shader.stage = cfg.stage
 
     return

@@ -3,10 +3,18 @@ package game_vulkan
 import "core:sync"
 import vk "vendor:vulkan"
 
+Gpu_Device :: struct {
+    device : ^vk.Device,
+    physical : ^vk.PhysicalDevice
+}
+
 Gpu_Arena :: struct {
     current_block : ^Gpu_Memory_Block,
     block_size : int,
-    mutex : sync.Mutex
+    mutex : sync.Mutex,
+    queue_families : []u32,
+    usage_types : vk.BufferUsageFlags2,
+    gpu_device : Gpu_Device
 }
 
 Gpu_Memory_Block :: struct {
@@ -26,35 +34,218 @@ Gpu_Slice :: struct {
     size : int
 }
 
-/// reserves a slice of the GPU for the caller
-gpu_allocate :: proc(arena : ^Gpu_Arena, size : int) -> Gpu_Slice {
-    if arena.current_block == nil {
-        sync.lock(&arena.mutex)
-        defer sync.unlock(&arena.mutex)
+Arena_Config :: struct {
+    queue_families : QueueTypes,
+    usage_types : vk.BufferUsageFlags2,
+    block_size : int
+}
 
-        _allocate_new_block(arena)
-    }
+get_underlying_buffer :: proc(arena : Gpu_Arena, block_index: Gpu_Block_Handle) -> vk.Buffer {
+    current_block := arena.current_block
+    for {
+        if current_block != nil {
+            break
+        }
 
-    if arena.current_block.current_offset + size >= arena.current_block.size {
-        sync.lock(&arena.mutex)
-        defer sync.unlock(&arena.mutex)
+        if int(block_index) == current_block.block_index {
+            return current_block.buffer
+        }
 
-        _allocate_new_block(arena)
-
+        current_block = current_block.prev_block
     }
 
     return {}
 }
 
-/// frees all memory from the GPU
-gpu_free :: proc(arena : ^Gpu_Arena) {
+create_gpu_arena :: proc(ctx : ^Context, cfg : Arena_Config) -> (arena : Gpu_Arena, ok : bool = true) {
+    sync.lock(&arena.mutex)
+    defer sync.unlock(&arena.mutex)
+
+    arena.block_size = cfg.block_size
+    arena.usage_types = cfg.usage_types
+    arena.gpu_device.device = &ctx.device
+    arena.gpu_device.physical = &ctx.phys_dev
+
+    queue_fams : ^QueueFamily
+    queue_fams, ok = find_queue_family_by_type(ctx, cfg.queue_families)
+
+    if !ok {
+        return
+    }
+
+    arena.queue_families = {queue_fams.family_idx}
+
+    _allocate_new_block(&arena)
+    return
 }
 
-_allocate_new_block :: proc(arena : ^Gpu_Arena) {
+destroy_gpu_arena :: proc(arena : ^Gpu_Arena) {
+    sync.lock(&arena.mutex)
+    defer sync.unlock(&arena.mutex)
+    if arena.current_block != nil {
+        _free_gpu_memory(arena.gpu_device.device, arena.current_block.buffer, arena.current_block.memory)
+        free(arena.current_block)
+    }
+}
+
+/// reserves a slice of the GPU for the caller
+gpu_allocate :: proc(arena : ^Gpu_Arena, size : int) -> (Gpu_Slice, bool) {
+    sync.lock(&arena.mutex)
+    defer sync.unlock(&arena.mutex)
+
+    if arena.current_block == nil {
+        if !_allocate_new_block(arena) {
+            return {}, false
+        }
+    }
+
+    if arena.current_block.current_offset + size >= arena.current_block.size {
+        if !_allocate_new_block(arena) {
+            return {}, false
+        }
+
+    }
+
+    slice : Gpu_Slice
+    slice.block = Gpu_Block_Handle(arena.current_block.block_index)
+    slice.offset = arena.current_block.current_offset
+    slice.size = size
+
+    arena.current_block.current_offset += size
+
+    return slice, true
+}
+
+/// frees all memory for the arena from the GPU
+gpu_free :: proc(arena : ^Gpu_Arena) {
+    sync.lock(&arena.mutex)
+    defer sync.unlock(&arena.mutex)
+
+    for arena.current_block != nil && arena.current_block.prev_block != nil {
+        block := arena.current_block
+        arena.current_block = arena.current_block.prev_block
+
+        _free_gpu_memory(arena.gpu_device.device, block.buffer, block.memory)
+
+        free(block)
+    }
+
+    if arena.current_block != nil {
+        arena.current_block.current_offset = 0
+    }
+}
+
+_allocate_new_block :: proc(arena : ^Gpu_Arena) -> (ok : bool = true) {
     gpu_block := new(Gpu_Memory_Block)
 
     gpu_block.prev_block = arena.current_block
+    gpu_block.size = arena.block_size
+    gpu_block.current_offset = 0
+    if arena.current_block == nil {
+        gpu_block.block_index = 0
+    } else {
+        gpu_block.block_index = arena.current_block.block_index + 1
+    }
+
+    gpu_block.buffer, gpu_block.memory, ok = _allocate_device_local_memory(arena.gpu_device, gpu_block.size, arena.queue_families)
+
     arena.current_block = gpu_block
 
-    // now allocate the gpu resources
+    return
+}
+
+_allocate_device_local_memory :: proc(gpu : Gpu_Device, size : int, q_fam_indices : []u32) -> (buffer : vk.Buffer, memory : vk.DeviceMemory, ok : bool = true) {
+    buffer, memory, ok = _allocate_gpu_memory(gpu.device, gpu.physical, size, q_fam_indices, {.DEVICE_LOCAL})
+    return
+}
+
+_allocate_host_coherent_memory :: proc(gpu : Gpu_Device, size : int, q_fam_indices : []u32) -> (buffer : vk.Buffer, memory : vk.DeviceMemory, scratchpad : rawptr, ok : bool = true) {
+    buffer, memory, ok = _allocate_gpu_memory(gpu.device, gpu.physical, size, q_fam_indices, {.HOST_COHERENT, .HOST_VISIBLE})
+
+    map_info : vk.MemoryMapInfo
+    map_info.sType = .MEMORY_MAP_INFO
+    map_info.memory = memory
+    map_info.size = vk.DeviceSize(size)
+    map_info.offset = 0
+    map_info.flags = {}
+
+    res := vk.MapMemory2(gpu.device^, &map_info, &scratchpad)
+
+    if res != .SUCCESS {
+        ok = false
+    }
+
+    return
+}
+
+_allocate_gpu_memory :: proc(
+    gpu : ^vk.Device,
+    physical_gpu : ^vk.PhysicalDevice,
+    size : int,
+    family_indices : []u32,
+    mem_flags : vk.MemoryPropertyFlags) -> (buffer : vk.Buffer, memory : vk.DeviceMemory, ok : bool = true) {
+
+    create_info : vk.BufferCreateInfo
+    create_info.sType = .BUFFER_CREATE_INFO
+    create_info.size = vk.DeviceSize(size)
+    create_info.usage = {}
+    create_info.queueFamilyIndexCount = u32(len(family_indices))
+    create_info.pQueueFamilyIndices = &family_indices[0]
+
+    if len(family_indices) > 1 {
+        create_info.sharingMode = .CONCURRENT
+    } else {
+        create_info.sharingMode = .EXCLUSIVE
+    }
+
+    res := vk.CreateBuffer(gpu^, &create_info, {}, &buffer)
+    
+    if res != .SUCCESS {
+        ok = false
+        return
+    }
+
+    mem_req : vk.MemoryRequirements2
+    mem_props : vk.PhysicalDeviceMemoryProperties2
+
+    req_info : vk.BufferMemoryRequirementsInfo2
+    req_info.sType = .BUFFER_MEMORY_REQUIREMENTS_INFO_2
+    req_info.buffer = buffer
+
+    vk.GetBufferMemoryRequirements2(gpu^, &req_info, &mem_req)
+
+    vk.GetPhysicalDeviceMemoryProperties2(physical_gpu^, &mem_props)
+
+    memory_index : u32
+    for i in 0..<mem_props.memoryProperties.memoryTypeCount {
+        mem_type := mem_props.memoryProperties.memoryTypes[i]
+        if (mem_type.propertyFlags & mem_flags) == mem_flags {
+            memory_index = i
+        }
+    }
+
+    mem_alloc_info : vk.MemoryAllocateInfo
+    mem_alloc_info.sType = .MEMORY_ALLOCATE_INFO
+    mem_alloc_info.allocationSize = mem_req.memoryRequirements.size
+    mem_alloc_info.memoryTypeIndex = memory_index
+
+    res = vk.AllocateMemory(gpu^, &mem_alloc_info, {}, &memory)
+
+    if res != .SUCCESS {
+        ok = false
+        return
+    }
+
+    res = vk.BindBufferMemory(gpu^, buffer, memory, 0)
+
+    if res != .SUCCESS {
+        ok = false
+    }
+
+    return
+}
+
+_free_gpu_memory :: proc(gpu : ^vk.Device, buffer : vk.Buffer, memory : vk.DeviceMemory) {
+    vk.FreeMemory(gpu^, memory, {})
+    vk.DestroyBuffer(gpu^, buffer, {})
 }

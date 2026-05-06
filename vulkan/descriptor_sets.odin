@@ -10,9 +10,9 @@ import "../core"
 Descriptor_Collection :: struct {
     set_count : int,
     binding_count : int,
-    pool : vk.DescriptorPool,
-    layout : []vk.DescriptorSetLayout,
-    set : []vk.DescriptorSet,
+    pool    : vk.DescriptorPool,
+    layout  : []vk.DescriptorSetLayout,
+    set     : []vk.DescriptorSet,
     type_count : [core.Descriptor_Type]u32
 }
 
@@ -22,6 +22,120 @@ Descriptor_Config :: struct {
 
     // how many bindings you need, based on usage type
     type_count : [core.Descriptor_Type]u32
+}
+
+Descriptor_Set_Binding :: struct ($N : int) {
+    type : core.Descriptor_Type,
+    binding : int,
+    memory : [N]Gpu_Slice
+}
+
+create_descriptors :: proc(ctx : ^Context, descriptor_configs : []$T/Descriptor_Set_Binding($N), memory : ^Gpu_Arena) -> (collection : Descriptor_Collection, ok : bool = true) {
+    pool_sizes : [core.Descriptor_Type]vk.DescriptorPoolSize
+    pool_sizes[.STORAGE] = {
+        type = .STORAGE_BUFFER,
+        descriptorCount = 0
+    }
+
+    pool_sizes[.UNIFORM] = {
+        type = .UNIFORM_BUFFER,
+        descriptorCount = 0
+    }
+
+    pool_sizes[.IMAGE_SAMPLER] = {
+        type = .COMBINED_IMAGE_SAMPLER,
+        descriptorCount = 0
+    }
+
+    total_sets : int
+    for d in descriptor_configs {
+        pool_sizes[d.type].descriptorCount += 1
+    }
+
+    pool_info : vk.DescriptorPoolCreateInfo
+    pool_info.sType = .DESCRIPTOR_POOL_CREATE_INFO
+    pool_info.maxSets = u32(N)
+    pool_info.poolSizeCount = u32(len(pool_sizes))
+    pool_info.pPoolSizes = raw_data(pool_sizes)
+    pool_info.flags = {.FREE_DESCRIPTOR_SET, .UPDATE_AFTER_BIND}
+
+    res := vk.CreateDescriptorPool(ctx.device, &pool_info, {}, &collection.pool)
+
+    if res != .SUCCESS {
+        ok = false
+        return
+    }
+
+    collection.set_count = N
+    collection.layout = make([]vk.DescriptorSetLayout, N)
+    collection.set = make([]vk.DescriptorSet, N)
+
+    bindings : [N]vk.DescriptorSetLayoutBinding
+    for cfg, i in descriptor_configs {
+        binding := &bindings[i]
+        binding.descriptorType = _to_vk_descriptor_type(cfg.type)
+        binding.binding = cfg.binding
+        binding.descriptorCount = 1
+        binding.stageFlags = {.VERTEX, .FRAGMENT, .COMPUTE}
+    }
+
+    collection.binding_count = len(descriptor_configs)
+
+    layout_info : vk.DescriptorSetLayoutCreateInfo
+    layout_info.sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO
+    layout_info.bindingCount = u32(collection.binding_count)
+    layout_info.pBindings = &bindings[0]
+
+    for i in 0..<N {
+        res = vk.CreateDescriptorSetLayout(ctx.device, &layout_info, {}, &collection.layout[i])
+
+        if res != .SUCCESS {
+            ok = false
+            return
+        }
+    }
+
+    set_info : vk.DescriptorSetAllocateInfo
+    set_info.sType = .DESCRIPTOR_SET_ALLOCATE_INFO
+    set_info.descriptorPool = collection.pool
+    set_info.descriptorSetCount = u32(N)
+    set_info.pSetLayouts = &collection.layout[0]
+
+    res = vk.AllocateDescriptorSets(ctx.device, &set_info, &collection.set[0])
+
+    if res != .SUCCESS {
+        ok = false
+        return
+    }
+
+    writes : [dynamic]vk.WriteDescriptorSet
+    buffer_infos : [dynamic]vk.DescriptorBufferInfo
+
+    for cfg in descriptor_configs {
+        for i in 0..<N {
+            buffer_info : vk.DescriptorBufferInfo
+            buffer_info.buffer = get_underlying_buffer(memory^, cfg.memory[i].block)
+            buffer_info.offset = vk.DeviceSize(cfg.memory[i].offset)
+            buffer_info.range = vk.DeviceSize(cfg.memory[i].size)
+
+            append(&buffer_infos, buffer_info)
+
+            write_info : vk.WriteDescriptorSet
+            write_info.sType = .WRITE_DESCRIPTOR_SET
+            write_info.dstSet = collection.set[i]
+            write_info.dstBinding = u32(cfg.binding)
+            write_info.dstArrayElement = 0
+            write_info.descriptorCount = 1
+            write_info.pBufferInfo = &buffer_infos[len(buffer_infos) - 1] // the most recently appended buffer_info
+            write_info.descriptorType = _to_vk_descriptor_type(cfg.type)
+
+            append(&writes, write_info)
+        }
+    }
+
+    vk.UpdateDescriptorSets(ctx.device, u32(len(writes)), &writes[0], 0, {})
+
+    return
 }
 
 create_descriptor_set :: proc(ctx: ^Context, cfg: Descriptor_Config) -> (collection: Descriptor_Collection, ok: bool=true) {
@@ -35,6 +149,11 @@ create_descriptor_set :: proc(ctx: ^Context, cfg: Descriptor_Config) -> (collect
     pool_sizes[.UNIFORM] = {
         type = .UNIFORM_BUFFER,
         descriptorCount = cfg.type_count[.UNIFORM] * cfg.count
+    }
+
+    pool_sizes[.IMAGE_SAMPLER] = {
+        type = .COMBINED_IMAGE_SAMPLER,
+        descriptorCount = cfg.type_count[.IMAGE_SAMPLER] * cfg.count
     }
 
     pool_info : vk.DescriptorPoolCreateInfo
@@ -68,7 +187,7 @@ create_descriptor_set :: proc(ctx: ^Context, cfg: Descriptor_Config) -> (collect
             binding.descriptorType = _to_vk_descriptor_type(type)
             binding.binding = index
             binding.descriptorCount = 1
-            binding.stageFlags = {.VERTEX}
+            binding.stageFlags = {.VERTEX, .FRAGMENT, .COMPUTE}
 
             append(&bindings, binding)
 
