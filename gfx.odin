@@ -83,14 +83,12 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
     log.info("Created Pipeline Layout")
 
     vert_cfg : gvk.Shader_Config
-    vert_cfg.filename = SHADERS_PATH + "vert.spv"
-    vert_cfg.shader_name = "main"
+    vert_cfg.file = SHADERS_PATH + "vert.spv"
     vert_cfg.stage = .VERTEX
     vert_cfg.descriptors = Core_Context.descriptors
 
     frag_cfg : gvk.Shader_Config
-    frag_cfg.filename = SHADERS_PATH + "frag.spv"
-    frag_cfg.shader_name = "main"
+    frag_cfg.file = SHADERS_PATH + "frag.spv"
     frag_cfg.stage = .FRAGMENT
     frag_cfg.descriptors = Core_Context.descriptors
 

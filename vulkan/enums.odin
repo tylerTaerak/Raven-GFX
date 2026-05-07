@@ -9,6 +9,8 @@ _to_vk_descriptor_type :: proc(type: core.Descriptor_Type) -> vk.DescriptorType 
             return .STORAGE_BUFFER
         case .UNIFORM:
             return .UNIFORM_BUFFER
+        case .IMAGE_SAMPLER:
+            return .COMBINED_IMAGE_SAMPLER
     }
 
     return .STORAGE_BUFFER

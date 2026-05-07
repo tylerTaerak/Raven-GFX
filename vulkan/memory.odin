@@ -9,12 +9,18 @@ Gpu_Device :: struct {
 }
 
 Gpu_Arena :: struct {
+    cmd_buf       : Command_Set,
     current_block : ^Gpu_Memory_Block,
     block_size : int,
     mutex : sync.Mutex,
     queue_families : []u32,
     usage_types : vk.BufferUsageFlags2,
-    gpu_device : Gpu_Device
+    gpu_device : Gpu_Device,
+    memory_type : Memory_Type
+}
+
+Gpu_Scratchpad :: struct {
+    using arena : Gpu_Arena,
 }
 
 Gpu_Memory_Block :: struct {
@@ -23,7 +29,8 @@ Gpu_Memory_Block :: struct {
     memory : vk.DeviceMemory,
     current_offset : int,
     size : int,
-    block_index : int
+    block_index : int,
+    host_memory : rawptr
 }
 
 Gpu_Block_Handle :: distinct int
@@ -31,13 +38,34 @@ Gpu_Block_Handle :: distinct int
 Gpu_Slice :: struct {
     block : Gpu_Block_Handle,
     offset : int,
-    size : int
+    size : int,
+    arena : ^Gpu_Arena
 }
 
 Arena_Config :: struct {
     queue_families : QueueTypes,
     usage_types : vk.BufferUsageFlags2,
-    block_size : int
+    block_size : int,
+    memory_type : Memory_Type
+}
+
+Memory_Type :: enum {
+    DEVICE,
+    HOST_COHERENT
+}
+
+gpu_copy :: proc(cmd : vk.CommandBuffer, dst : Gpu_Slice, src : Gpu_Slice) {
+    assert(dst.size == src.size)
+
+    dst_buf := get_underlying_buffer(dst.arena^, dst.block)
+    src_buf := get_underlying_buffer(src.arena^, src.block)
+
+    copy_info : vk.BufferCopy
+    copy_info.srcOffset = vk.DeviceSize(src.offset)
+    copy_info.dstOffset = vk.DeviceSize(dst.offset)
+    copy_info.size = vk.DeviceSize(dst.size)
+
+    vk.CmdCopyBuffer(cmd, src_buf, dst_buf, 1, &copy_info)
 }
 
 get_underlying_buffer :: proc(arena : Gpu_Arena, block_index: Gpu_Block_Handle) -> vk.Buffer {
@@ -57,6 +85,19 @@ get_underlying_buffer :: proc(arena : Gpu_Arena, block_index: Gpu_Block_Handle) 
     return {}
 }
 
+slice :: proc(origin : Gpu_Slice, offset, size : int) -> Gpu_Slice{
+    new_slice : Gpu_Slice
+    new_slice.block = origin.block
+    new_slice.offset = origin.offset + offset
+    new_slice.size = size
+    new_slice.arena = origin.arena
+
+    assert(new_slice.offset > origin.offset)
+    assert(new_slice.offset + new_slice.size < origin.offset + origin.size)
+
+    return new_slice
+}
+
 create_gpu_arena :: proc(ctx : ^Context, cfg : Arena_Config) -> (arena : Gpu_Arena, ok : bool = true) {
     sync.lock(&arena.mutex)
     defer sync.unlock(&arena.mutex)
@@ -74,6 +115,7 @@ create_gpu_arena :: proc(ctx : ^Context, cfg : Arena_Config) -> (arena : Gpu_Are
     }
 
     arena.queue_families = {queue_fams.family_idx}
+    arena.memory_type = cfg.memory_type
 
     _allocate_new_block(&arena)
     return
@@ -110,6 +152,7 @@ gpu_allocate :: proc(arena : ^Gpu_Arena, size : int) -> (Gpu_Slice, bool) {
     slice.block = Gpu_Block_Handle(arena.current_block.block_index)
     slice.offset = arena.current_block.current_offset
     slice.size = size
+    slice.arena = arena
 
     arena.current_block.current_offset += size
 
@@ -135,6 +178,7 @@ gpu_free :: proc(arena : ^Gpu_Arena) {
     }
 }
 
+
 _allocate_new_block :: proc(arena : ^Gpu_Arena) -> (ok : bool = true) {
     gpu_block := new(Gpu_Memory_Block)
 
@@ -147,7 +191,12 @@ _allocate_new_block :: proc(arena : ^Gpu_Arena) -> (ok : bool = true) {
         gpu_block.block_index = arena.current_block.block_index + 1
     }
 
-    gpu_block.buffer, gpu_block.memory, ok = _allocate_device_local_memory(arena.gpu_device, gpu_block.size, arena.queue_families)
+    switch arena.memory_type {
+        case .DEVICE:
+            gpu_block.buffer, gpu_block.memory, ok = _allocate_device_local_memory(arena.gpu_device, gpu_block.size, arena.queue_families)
+        case .HOST_COHERENT:
+            gpu_block.buffer, gpu_block.memory, _, ok = _allocate_host_coherent_memory(arena.gpu_device, gpu_block.size, arena.queue_families)
+    }
 
     arena.current_block = gpu_block
 

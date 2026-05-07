@@ -13,9 +13,21 @@ Model_Data :: struct {
 
 Primitive_Data :: struct {
     indices : []u16,
-    descriptor_data : [Descriptor_Data_Type][]f32,
+    descriptor_data : map[string][]f32,
     vertex_count : u32
     // material data too
+}
+
+GLTF_Strings : [cgltf.attribute_type]string = {
+    .invalid = "invalid",
+    .position = "position",
+    .normal = "normal",
+    .tangent = "tangent",
+    .texcoord = "texcoord",
+    .color = "color",
+    .joints = "joints",
+    .weights = "weights",
+    .custom = "custom"
 }
 
 load_models_from_file :: proc(filepath : string) -> (models: []Model_Data) {
@@ -73,43 +85,23 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
             }
 
             vertex_count : u32
-            for &attr in primitive.attributes {
+            new_data : Primitive_Data
+            for &attr, i in primitive.attributes {
                 accessor := attr.data
 
                 byte_buffer := _make_bytes_from_accessor(accessor)
                 defer delete(byte_buffer)
 
-                core_type : Descriptor_Data_Type
-
-                #partial switch attr.type {
-                    case .position:
-                        core_type = .POSITION
-                        vertex_count = u32(accessor.count)
-                    case .texcoord:
-                        core_type = .TEXCOORD
-                    case .color:
-                        core_type = .COLOR
-                    case .normal:
-                        core_type = .NORMAL
-                    case .tangent:
-                        core_type = .TANGENT
-                }
-
                 float_data := _convert_bytes(byte_buffer, f32)
                 float_data = _pad_to_vec4(float_data, int(cgltf.num_components(accessor.type)))
 
-                descriptor_data[core_type] = float_data
+                new_data.descriptor_data[GLTF_Strings[attr.type]] = float_data
             }
 
-            // now we need to load the stuff into the GPU, I think having an externally defined loader proc should
-            // be used to load the bytes
+            new_data.indices = _convert_bytes(vert_idx_data, u16)
+            new_data.vertex_count = vertex_count
 
-            primitive : Primitive_Data
-            primitive.indices = _convert_bytes(vert_idx_data, u16)
-            primitive.descriptor_data = descriptor_data
-            primitive.vertex_count = vertex_count
-
-            append(&primitives, primitive)
+            append(&primitives, new_data)
         }
 
         model : Model_Data
@@ -126,6 +118,9 @@ load_models_from_bytes :: proc(bytes : []byte, filepath: string) -> (models: []M
 }
 
 load_model :: proc {load_models_from_file, load_models_from_bytes}
+
+free_model :: proc(model : ^Model_Data) {
+}
 
 
 @(private)

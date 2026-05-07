@@ -109,7 +109,7 @@ write_draw_command_buffer :: proc(draw_commands : Draw_Map, dst_buffer : ^gvk.Ho
         for model_chunk in Core_Context.assets.models[key.model].chunks {
             vk_draw_cmd : vk.DrawIndexedIndirectCommand
             vk_draw_cmd.indexCount = model_chunk.index_count
-            vk_draw_cmd.firstIndex = model_chunk.index_offset
+            vk_draw_cmd.firstIndex = u32(model_chunk.index_offset) / size_of(u16)
             vk_draw_cmd.instanceCount = u32(len(tforms))
             vk_draw_cmd.vertexOffset = i32(model_chunk.vertex_offset)
             vk_draw_cmd.firstInstance = instance_offset
@@ -227,6 +227,9 @@ commit_draw_commands :: proc(cmd_buf : vk.CommandBuffer, draw_commands : gvk.Hos
 
         }
 
+        // big TODO)) - I'm trying to separate out the descriptor sets from being in the central context, so this bit isn't going to fly right now.
+        // I would like to have a way to map Shader Objects with descriptor sets and PipelineLayouts and have that sent in as a single, larger "Shader" object.
+        // The core context should have a set of default shaders that it uses that utilizes this new methodology, and a user should be able to override them
         bind_info : vk.BindDescriptorSetsInfo
         bind_info.sType = .BIND_DESCRIPTOR_SETS_INFO
         bind_info.descriptorSetCount = 1
@@ -237,7 +240,7 @@ commit_draw_commands :: proc(cmd_buf : vk.CommandBuffer, draw_commands : gvk.Hos
 
         vk.CmdBindDescriptorSets2KHR(cmd_buf, &bind_info)
 
-        vk.CmdBindIndexBuffer(cmd_buf, Core_Context.assets.index_buffer.internal_buffer.buf, 0, .UINT16)
+        vk.CmdBindIndexBuffer(cmd_buf, gvk.get_underlying_buffer(Core_Context.assets.arena, Core_Context.assets.index_data_raw.block), 0, .UINT16)
 
         vk.CmdDrawIndexedIndirect(cmd_buf, draw_commands.internal_buffer.buf, offset, draw_count, size_of(vk.DrawIndexedIndirectCommand))
 

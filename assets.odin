@@ -10,19 +10,14 @@ MAX_VERTICES :: 512_000
 
 Model_Chunk :: struct {
     // offsets for GPU buffers
-    vertex_offset   : u32,
-    index_offset    : u32,
+    vertex_offset   : uintptr,
+    index_offset    : uintptr,
 
     // number of draws to run
     vertex_count    : u32,
     index_count     : u32,
 
-    // these buffers are all for descriptor sets
-    v_positions     : gvk.Buffer_Slice([4]f32),
-    v_texcoords     : gvk.Buffer_Slice([4]f32),
-    v_colors        : gvk.Buffer_Slice([4]f32),
-    v_normals       : gvk.Buffer_Slice([4]f32),
-    v_tangents      : gvk.Buffer_Slice([4]f32),
+    v_attributes    : []gvk.Gpu_Slice,
 }
 
 Model_Asset :: struct {
@@ -49,6 +44,17 @@ Shared_Buffer :: struct ($T: typeid) {
     host_mem    : gvk.Host_Buffer(T)
 }
 
+Byte :: 1
+KiloByte :: 1024 * Byte
+MegaByte :: 1024 * KiloByte
+GigaByte :: 1024 * MegaByte
+
+INITIAL_VERTEX_BYTE_COUNT       :: 2 * GigaByte
+INITIAL_DESCRIPTOR_BYTE_COUNT   :: 500 * MegaByte
+
+SCRATCHPAD_SIZE                 :: 500 * MegaByte
+
+INITIAL_INDEX_BYTE_COUNT        :: 2 * GigaByte
 
 // TODO)) it might be worth having a command buffer just for the asset handler...
 // Transfer commands need to be run on their own anyway... - maybe the asset handler
@@ -56,20 +62,22 @@ Shared_Buffer :: struct ($T: typeid) {
 Asset_Handler :: struct {
     commands    : gvk.Command_Set,
     models      : [dynamic]Model_Asset,
-    textures    : [dynamic]Texture_Asset,
-    fonts       : [dynamic]Font_Asset,
+    gpu_queue_fam : ^gvk.QueueFamily,
+    // textures    : [dynamic]Texture_Asset,
+    // fonts       : [dynamic]Font_Asset,
 
-    // buffers
-    desc_positions  : Shared_Buffer([4]f32),
-    desc_texcoords  : Shared_Buffer([4]f32),
-    desc_colors     : Shared_Buffer([4]f32),
-    desc_normals    : Shared_Buffer([4]f32),
-    desc_tangents   : Shared_Buffer([4]f32),
-    index_buffer    : Host_Buffer(u32),
+    arena : gvk.Gpu_Arena,
+    host_mem : gvk.Gpu_Arena,
+
+    descriptors_raw : gvk.Gpu_Slice, // initialized to INITIAL_VERTEX_BYTE_COUNT
+    index_data_raw  : gvk.Gpu_Slice, // initialized to INITIAL_INDEX_BYTE_COUNT
+
+    // subsections of `descriptors_raw`, initialized at INITIAL_DESCRIPTOR_BYTE_COUNT
+    descriptor_slices : map[string]gvk.Gpu_Slice, 
 
     // offsets
-    vertex_offset   : u32,
-    index_offset    : u32,
+    vertex_offset   : uintptr, // bytes
+    index_offset    : uintptr, // bytes
 
     // writing semaphore
     prev_write_sem      : gvk.Semaphore,
@@ -78,48 +86,27 @@ Asset_Handler :: struct {
 }
 
 create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
-    fam := gvk.find_queue_family_by_type(Core_Context.backend, {.TRANSFER}) or_return
+    family_types : QueueTypes = {.TRANSFER, .GRAPHICS, .COMPUTE}
 
-    handler.commands = gvk.create_command_set(Core_Context.backend, 1, fam^) or_return
+    mem_cfg : gvk.Arena_Config
+    mem_cfg.queue_families = family_types
+    mem_cfg.block_size = INITIAL_VERTEX_BYTE_COUNT
+    mem_cfg.memory_type = .DEVICE
 
-    handler.desc_positions.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_positions.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
+    handler.arena = gvk.create_gpu_arena(Core_Context.backend, mem_cfg) or_return
 
-    handler.desc_texcoords.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_texcoords.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
+    handler.gpu_queue_fam = gvk.find_queue_family_by_type(Core_Context.backend, family_types) or_return
+    handler.commands = gvk.create_command_set(Core_Context.backend, 1, handler.gpu_queue_fam^) or_return
 
-    handler.desc_colors.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_colors.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
+    handler.descriptors_raw = gvk.gpu_allocate(&handler.arena, INITIAL_VERTEX_BYTE_COUNT) or_return
+    handler.index_data_raw = gvk.gpu_allocate(&handler.arena, INITIAL_INDEX_BYTE_COUNT) or_return
 
-    handler.desc_normals.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_normals.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
+    mem_cfg.memory_type = .HOST_COHERENT
+    mem_cfg.block_size = SCRATCHPAD_SIZE
 
-    handler.desc_tangents.device_mem = gvk.create_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_DST, .STORAGE_BUFFER}, {.DEVICE_LOCAL})
-    handler.desc_tangents.host_mem = gvk.create_host_buffer(Core_Context.backend, [4]f32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC})
-
-    handler.index_buffer = gvk.create_host_buffer(Core_Context.backend, u32, MAX_VERTICES, {fam^}, {.TRANSFER_SRC, .TRANSFER_DST, .INDEX_BUFFER})
+    handler.host_mem = gvk.create_gpu_arena(Core_Context.backend, mem_cfg) or_return
 
     handler.write_fence = gvk.init_fence(Core_Context.backend)
-
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 0, handler.desc_positions.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 0, handler.desc_positions.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 0, handler.desc_positions.device_mem)
-
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 1, handler.desc_texcoords.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 1, handler.desc_texcoords.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 1, handler.desc_texcoords.device_mem)
-
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 2, handler.desc_colors.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 2, handler.desc_colors.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 2, handler.desc_colors.device_mem)
-
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 3, handler.desc_normals.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 3, handler.desc_normals.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 3, handler.desc_normals.device_mem)
-
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 0, 4, handler.desc_tangents.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 1, 4, handler.desc_tangents.device_mem)
-    gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, 2, 4, handler.desc_tangents.device_mem)
 
     return
 }
@@ -150,6 +137,9 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
     _wait_for_fence(Core_Context.backend, &handler.write_fence)
     _reset_fence(Core_Context.backend, &handler.write_fence)
 
+    // clear out the scratchpad
+    gvk.gpu_free(&handler.host_mem)
+
     _cycle_semaphores(handler)
 
     // open the GPU command buffer for submitting transfer work
@@ -169,50 +159,53 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
             chunk.index_count  = u32(len(prim.indices))
 
             v_start := handler.vertex_offset
-            v_end := v_start + chunk.vertex_count
+            v_end := v_start + uintptr(chunk.vertex_count * 4 * size_of(f32)) // descriptor data is padded to [4]f32
+            v_size := v_end - v_start
+
             i_start := handler.index_offset
+            i_end := i_start + uintptr(chunk.index_count * size_of(u16))
+            i_size := i_end - i_start
 
             log.info("Copying", chunk.vertex_count, "vertices into GPU memory at vertex offset", chunk.vertex_offset)
             log.info("Copying", chunk.index_count, "indicies into GPU memory at offset", chunk.index_offset)
 
-            mem.copy(rawptr(uintptr(handler.index_buffer.data_ptr) + uintptr(i_start * size_of(u16))), raw_data(prim.indices), len(prim.indices) * size_of(u16))
+            // copy indices to scratchpad
+            index_slice_src, ok := gvk.gpu_allocate(&handler.host_mem, int(i_size))
+            index_slice_dst := gvk.slice(handler.index_data_raw, int(i_start), int(i_size))
 
-            mem.copy(
-                rawptr(uintptr(handler.desc_positions.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
-                raw_data(prim.descriptor_data[.POSITION]),
-                len(prim.descriptor_data[.POSITION]) * size_of(f32))
+            curr_ptr := uintptr(handler.host_mem.current_block.host_memory)
+            init_ptr := curr_ptr // we can then just perform a copy from init_ptr to curr_ptr
+            //TODO)) This bypasses the actual use of our arena, so it can't grow dynamically - there needs to be a utility to write data to the host-side of a coherent arena
+            mem.copy(rawptr(curr_ptr), raw_data(prim.indices), int(i_size))
+            curr_ptr += i_size
 
-            mem.copy(
-                rawptr(uintptr(handler.desc_texcoords.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
-                raw_data(prim.descriptor_data[.TEXCOORD]),
-                len(prim.descriptor_data[.TEXCOORD]) * size_of(f32))
-
-            mem.copy(
-                rawptr(uintptr(handler.desc_colors.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
-                raw_data(prim.descriptor_data[.COLOR]),
-                len(prim.descriptor_data[.COLOR]) * size_of(f32))
-
-            mem.copy(
-                rawptr(uintptr(handler.desc_normals.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
-                raw_data(prim.descriptor_data[.NORMAL]),
-                len(prim.descriptor_data[.NORMAL]) * size_of(f32))
-
-            mem.copy(
-                rawptr(uintptr(handler.desc_tangents.host_mem.data_ptr) + uintptr(v_start * size_of([4]f32))),
-                raw_data(prim.descriptor_data[.TANGENT]),
-                len(prim.descriptor_data[.TANGENT]) * size_of(f32))
-
-            // add commands to command buffer to copy from the host buffer to the GPU buffer
-
-            _copy_to_gpu(buf, &handler.desc_positions, int(v_start), int(v_end))
-            _copy_to_gpu(buf, &handler.desc_texcoords, int(v_start), int(v_end))
-            _copy_to_gpu(buf, &handler.desc_colors, int(v_start), int(v_end))
-            _copy_to_gpu(buf, &handler.desc_normals, int(v_start), int(v_end))
-            _copy_to_gpu(buf, &handler.desc_tangents, int(v_start), int(v_end))
+            gvk.gpu_copy(buf, index_slice_dst, index_slice_src)
 
 
-            handler.index_offset += chunk.index_count
-            handler.vertex_offset += chunk.vertex_count
+            for name, data in prim.descriptor_data {
+                // copy descriptor data to scratchpad
+                if !(name in handler.descriptor_slices) {
+                    handler.descriptor_slices[name] = gvk.slice(
+                            handler.descriptors_raw,
+                            INITIAL_DESCRIPTOR_BYTE_COUNT * len(handler.descriptor_slices),
+                            INITIAL_DESCRIPTOR_BYTE_COUNT)
+
+                }
+
+                descriptor_slice := handler.descriptor_slices[name]
+
+                subslice := gvk.slice(descriptor_slice, int(v_start), int(v_size))
+
+                mem.copy(rawptr(curr_ptr), raw_data(data), int(v_size))
+                vertex_slice, vok := gvk.gpu_allocate(&handler.host_mem, int(v_size))
+
+                gvk.gpu_copy(buf, subslice, vertex_slice)
+
+                curr_ptr += v_size
+            }
+            
+            handler.index_offset += i_size
+            handler.vertex_offset += v_size
 
             append(&chunks, chunk)
         }
@@ -223,15 +216,7 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
 
     gvk.end_command_buffer(buf)
 
-    fam, ok := gvk.find_queue_family_by_type(Core_Context.backend, {.TRANSFER})
-
-    if !ok
-    {
-        log.warn("Error finding correct queue family for transfer work, not submitting queue")
-        return
-    }
-    
-    gvk.submit_command_buffer(Core_Context.backend, buf, fam^, handler.prev_write_sem, handler.current_write_sem, handler.write_fence)
+    gvk.submit_command_buffer(Core_Context.backend, buf, handler.gpu_queue_fam^, handler.prev_write_sem, handler.current_write_sem, handler.write_fence)
 
     return
 }
@@ -247,19 +232,8 @@ destroy_asset_handler :: proc(handler : ^Asset_Handler) {
 
     gvk.destroy_fence(Core_Context.backend, handler.write_fence)
 
-    gvk.destroy_host_buffer(Core_Context.backend, handler.desc_tangents.host_mem)
-    gvk.destroy_host_buffer(Core_Context.backend, handler.desc_normals.host_mem)
-    gvk.destroy_host_buffer(Core_Context.backend, handler.desc_colors.host_mem)
-    gvk.destroy_host_buffer(Core_Context.backend, handler.desc_texcoords.host_mem)
-    gvk.destroy_host_buffer(Core_Context.backend, handler.desc_positions.host_mem)
-
-    gvk.destroy_buffer(Core_Context.backend, handler.desc_tangents.device_mem)
-    gvk.destroy_buffer(Core_Context.backend, handler.desc_normals.device_mem)
-    gvk.destroy_buffer(Core_Context.backend, handler.desc_colors.device_mem)
-    gvk.destroy_buffer(Core_Context.backend, handler.desc_texcoords.device_mem)
-    gvk.destroy_buffer(Core_Context.backend, handler.desc_positions.device_mem)
-
-    gvk.destroy_host_buffer(Core_Context.backend, handler.index_buffer)
+    gvk.gpu_free(&handler.host_mem)
+    gvk.gpu_free(&handler.arena)
 
     gvk.destroy_command_set(Core_Context.backend, &handler.commands)
 }
