@@ -110,10 +110,15 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes, vulkan_extensi
     for ext, i in vulkan_extensions {
         required_extensions_cstr[i] = strings.clone_to_cstring(ext)
     }
+
+    mesh_shaders_feature : vk.PhysicalDeviceMeshShaderFeaturesEXT
+    mesh_shaders_feature.sType = .PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT
+    mesh_shaders_feature.meshShader = true
     
     depth_clip_feature : vk.PhysicalDeviceDepthClipEnableFeaturesEXT
     depth_clip_feature.sType = .PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT
     depth_clip_feature.depthClipEnable = true
+    depth_clip_feature.pNext = &mesh_shaders_feature
 
     shobject_feature : vk.PhysicalDeviceShaderObjectFeaturesEXT
     shobject_feature.sType = .PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT

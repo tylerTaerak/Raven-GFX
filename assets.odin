@@ -8,6 +8,11 @@ import "core:mem"
 
 MAX_VERTICES :: 512_000
 
+Shader_Set :: struct {
+    shaders : gvk.Shader_Chain,
+    descriptors : gvk.Descriptor_Collection
+}
+
 Model_Chunk :: struct {
     // offsets for GPU buffers
     vertex_offset   : uintptr,
@@ -38,11 +43,6 @@ Font_Asset :: struct {
 }
 
 Font_Handle :: distinct u64
-
-Shared_Buffer :: struct ($T: typeid) {
-    device_mem  : gvk.Buffer(T),
-    host_mem    : gvk.Host_Buffer(T)
-}
 
 Byte :: 1
 KiloByte :: 1024 * Byte
@@ -109,13 +109,6 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
     handler.write_fence = gvk.init_fence(Core_Context.backend)
 
     return
-}
-
-_copy_to_gpu :: proc(buffer : vk.CommandBuffer, data : ^$T/Shared_Buffer($E), begin, end : int) {
-    host_slice := gvk.make_slice_from_indicies(&data.host_mem.internal_buffer, begin, end)
-    dev_slice := gvk.make_slice_from_indicies(&data.device_mem, begin, end)
-
-    gvk.copy_buffer_data(buffer, &host_slice, &dev_slice)
 }
 
 _cycle_semaphores :: proc(handler : ^Asset_Handler) {

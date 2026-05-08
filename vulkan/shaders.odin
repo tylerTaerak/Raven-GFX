@@ -6,16 +6,22 @@ import "../core"
 import vk "vendor:vulkan"
 import "core:strings"
 
+/// TODO)) These objects should be templatized and brought into `core` - the are user-level objects, so they need to be usable with different backends
 Shader :: struct {
     stage   : core.Shader_Stage,
     obj     : vk.ShaderEXT
 }
 
-Shader_Config :: struct {
+Shader_Chain :: struct {
+    shaders : []Shader
+}
+
+Shader_Chain_Config :: struct {
     file : union{string, []byte},
     entrypoint_name : string,
     stage : core.Shader_Stage,
-    descriptors : Descriptor_Collection
+    descriptors : Descriptor_Collection,
+    next_shader : ^Shader_Chain_Config
     // I don't think I'm using push constants anywhere TODO)) yet... we'll be adding cameras etc. soon
 }
 
@@ -31,14 +37,32 @@ stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
             return .FRAGMENT
         case .COMPUTE:
             return .COMPUTE
+        case .MESH:
+            return .MESH_EXT
     }
 
     return .VERTEX
 }
 
-create_shader :: proc(ctx : ^Context, cfg : ^Shader_Config) -> (shader : Shader, ok : bool = true) {
-    shader_code : []byte
-    switch file in cfg.file {
+create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config) -> (shader_set : Shader_Chain, ok : bool = true) {
+    current_cfg : ^Shader_Chain_Config = cfg
+
+    shaders : [dynamic]Shader
+    defer delete(shaders)
+
+    visited_stages : bit_set[core.Shader_Stage]
+
+    for current_cfg != nil {
+        // Vulkan doesn't allow binding multiple shaders of the same type, so enforce that when loading a single set of shaders
+        if current_cfg.stage in visited_stages {
+            ok = false
+            return
+        }
+
+        visited_stages += {current_cfg.stage}
+
+        shader_code : []byte
+        switch file in cfg.file {
         case string:
             err : os.Error
             shader_code, err = os.read_entire_file(file, context.temp_allocator)
@@ -49,42 +73,44 @@ create_shader :: proc(ctx : ^Context, cfg : ^Shader_Config) -> (shader : Shader,
             }
         case []byte:
             shader_code = file
+        }
+
+        cname := strings.clone_to_cstring(cfg.entrypoint_name)
+        defer delete(cname)
+
+        cinfo : vk.ShaderCreateInfoEXT
+        cinfo.sType = .SHADER_CREATE_INFO_EXT
+        cinfo.flags = {}
+        cinfo.stage = {stage_to_vk_enum(cfg.stage)}
+        cinfo.codeType = .SPIRV
+        cinfo.codeSize = len(shader_code)
+        cinfo.pCode = &shader_code[0]
+        cinfo.pName = cname
+        cinfo.setLayoutCount = u32(cfg.descriptors.set_count)
+        cinfo.pSetLayouts = &cfg.descriptors.layout[0]
+
+        if cfg.next_shader != nil {
+            cinfo.nextStage = {stage_to_vk_enum(cfg.next_shader.stage)}
+        }
+
+        shader : Shader
+
+        res := vk.CreateShadersEXT(ctx.device, 1, &cinfo, {}, &shader.obj)
+
+        if res != .SUCCESS
+        {
+            ok = false
+            return
+        }
+
+        shader.stage = cfg.stage
+
+        append(&shaders, shader)
     }
 
+    shader_set.shaders = make([]Shader, len(shaders))
 
-    log.info(cfg.descriptors.set_count)
-    log.info(len(cfg.descriptors.layout))
-    log.info(&cfg.descriptors.layout[0])
-
-    cname := strings.clone_to_cstring(cfg.entrypoint_name)
-    defer delete(cname)
-
-    cinfo : vk.ShaderCreateInfoEXT
-    cinfo.sType = .SHADER_CREATE_INFO_EXT
-    cinfo.flags = {}
-    cinfo.stage = {stage_to_vk_enum(cfg.stage)}
-    cinfo.codeType = .SPIRV
-    cinfo.codeSize = len(shader_code)
-    cinfo.pCode = &shader_code[0]
-    cinfo.pName = cname
-    cinfo.setLayoutCount = u32(cfg.descriptors.set_count)
-    cinfo.pSetLayouts = &cfg.descriptors.layout[0]
-
-    if cfg.stage == .VERTEX {
-        cinfo.nextStage = {.FRAGMENT}
-    }
-
-    log.info(cinfo)
-
-    res := vk.CreateShadersEXT(ctx.device, 1, &cinfo, {}, &shader.obj)
-
-    if res != .SUCCESS
-    {
-        ok = false
-        return
-    }
-
-    shader.stage = cfg.stage
+    copy(shader_set.shaders, shaders[:])
 
     return
 }

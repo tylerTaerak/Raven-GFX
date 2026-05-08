@@ -237,7 +237,16 @@ _allocate_gpu_memory :: proc(
     create_info : vk.BufferCreateInfo
     create_info.sType = .BUFFER_CREATE_INFO
     create_info.size = vk.DeviceSize(size)
-    create_info.usage = {}
+    create_info.usage = {
+        .TRANSFER_SRC,
+        .TRANSFER_DST,
+        .INDIRECT_BUFFER,
+        .INDEX_BUFFER,
+        .UNIFORM_BUFFER,
+        .SAMPLER_DESCRIPTOR_BUFFER_EXT,
+        .RESOURCE_DESCRIPTOR_BUFFER_EXT,
+        .SHADER_DEVICE_ADDRESS_EXT
+    }
     create_info.queueFamilyIndexCount = u32(len(family_indices))
     create_info.pQueueFamilyIndices = &family_indices[0]
 

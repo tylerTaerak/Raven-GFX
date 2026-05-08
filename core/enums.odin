@@ -87,5 +87,6 @@ Shader_Stage :: enum {
     VERTEX,
     GEOMETRY,
     FRAGMENT,
-    COMPUTE
+    COMPUTE,
+    MESH
 }
