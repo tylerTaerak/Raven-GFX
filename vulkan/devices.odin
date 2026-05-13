@@ -111,9 +111,14 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes, vulkan_extensi
         required_extensions_cstr[i] = strings.clone_to_cstring(ext)
     }
 
+    desc_buffers_feature : vk.PhysicalDeviceDescriptorBufferFeaturesEXT
+    desc_buffers_feature.sType = .PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT
+    desc_buffers_feature.descriptorBuffer = true
+
     mesh_shaders_feature : vk.PhysicalDeviceMeshShaderFeaturesEXT
     mesh_shaders_feature.sType = .PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT
     mesh_shaders_feature.meshShader = true
+    mesh_shaders_feature.pNext = &desc_buffers_feature
     
     depth_clip_feature : vk.PhysicalDeviceDepthClipEnableFeaturesEXT
     depth_clip_feature.sType = .PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT
