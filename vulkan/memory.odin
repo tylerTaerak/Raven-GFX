@@ -1,5 +1,6 @@
 package game_vulkan
 
+import "core:mem"
 import "core:sync"
 import vk "vendor:vulkan"
 
@@ -54,6 +55,37 @@ Memory_Type :: enum {
     HOST_COHERENT
 }
 
+get_buffer_device_address :: proc(ctx : ^Context, slice : Gpu_Slice) -> vk.DeviceAddress {
+    info : vk.BufferDeviceAddressInfoEXT
+    info.sType = .BUFFER_DEVICE_ADDRESS_INFO_EXT
+    info.buffer = get_underlying_buffer(slice.arena^, slice.block)
+
+    addr : vk.DeviceAddress = vk.GetBufferDeviceAddressEXT(ctx.device, &info)
+    return addr
+}
+
+get_device_address :: proc(ctx : ^Context, slice : Gpu_Slice) -> vk.DeviceAddress {
+    addr : vk.DeviceAddress = get_buffer_device_address(ctx, slice)
+    return addr + vk.DeviceAddress(slice.offset)
+}
+
+get_host_pointer :: proc(arena : ^Gpu_Arena, slice : Gpu_Slice) -> rawptr {
+    block := arena.current_block
+    for {
+        if block == nil {
+            break
+        }
+
+        if int(slice.block) == block.block_index {
+            return rawptr(uintptr(block.host_memory) + uintptr(slice.offset))
+        }
+
+        block = block.prev_block
+    }
+
+    return nil
+}
+
 gpu_copy :: proc(cmd : vk.CommandBuffer, dst : Gpu_Slice, src : Gpu_Slice) {
     assert(dst.size == src.size)
 
@@ -71,7 +103,7 @@ gpu_copy :: proc(cmd : vk.CommandBuffer, dst : Gpu_Slice, src : Gpu_Slice) {
 get_underlying_buffer :: proc(arena : Gpu_Arena, block_index: Gpu_Block_Handle) -> vk.Buffer {
     current_block := arena.current_block
     for {
-        if current_block != nil {
+        if current_block == nil {
             break
         }
 
@@ -131,7 +163,7 @@ destroy_gpu_arena :: proc(arena : ^Gpu_Arena) {
 }
 
 /// reserves a slice of the GPU for the caller
-gpu_allocate :: proc(arena : ^Gpu_Arena, size : int) -> (Gpu_Slice, bool) {
+gpu_allocate_unaligned :: proc(arena : ^Gpu_Arena, size : int) -> (Gpu_Slice, bool) {
     sync.lock(&arena.mutex)
     defer sync.unlock(&arena.mutex)
 
@@ -159,8 +191,42 @@ gpu_allocate :: proc(arena : ^Gpu_Arena, size : int) -> (Gpu_Slice, bool) {
     return slice, true
 }
 
+gpu_allocate_aligned :: proc(arena : ^Gpu_Arena, size : int, alignment : int) -> (Gpu_Slice, bool) {
+    sync.lock(&arena.mutex)
+    defer sync.unlock(&arena.mutex)
+
+    if arena.current_block == nil {
+        if !_allocate_new_block(arena) {
+            return {}, false
+        }
+    }
+
+    new_offset := mem.align_forward_int(arena.current_block.current_offset, alignment)
+
+    if new_offset + size >= arena.current_block.size {
+        if !_allocate_new_block(arena) {
+            return {}, false
+        }
+    }
+
+    slice : Gpu_Slice
+    slice.block = Gpu_Block_Handle(arena.current_block.block_index)
+    slice.offset = new_offset
+    slice.size = size
+    slice.arena = arena
+
+    arena.current_block.current_offset = new_offset + size
+
+    return slice, true
+}
+
+gpu_allocate :: proc {
+    gpu_allocate_unaligned,
+    gpu_allocate_aligned,
+}
+
 /// frees all memory for the arena from the GPU
-gpu_free :: proc(arena : ^Gpu_Arena) {
+gpu_free_all :: proc(arena : ^Gpu_Arena) {
     sync.lock(&arena.mutex)
     defer sync.unlock(&arena.mutex)
 

@@ -6,6 +6,11 @@ import "../core"
 import vk "vendor:vulkan"
 import "core:strings"
 
+Shader_Description :: struct {
+    descriptors : []Descriptor_Set,
+    layout : vk.PipelineLayout
+}
+
 /// TODO)) These objects should be templatized and brought into `core` - the are user-level objects, so they need to be usable with different backends
 Shader :: struct {
     stage   : core.Shader_Stage,
@@ -13,16 +18,21 @@ Shader :: struct {
 }
 
 Shader_Chain :: struct {
-    shaders : []Shader
+    shaders : []Shader,
+    descriptors : []Descriptor_Set,
+    layout : vk.PipelineLayout
 }
 
-Shader_Chain_Config :: struct {
+Shader_Config :: struct {
     file : union{string, []byte},
     entrypoint_name : string,
     stage : core.Shader_Stage,
-    descriptors : Descriptor_Collection,
-    next_shader : ^Shader_Chain_Config
-    // I don't think I'm using push constants anywhere TODO)) yet... we'll be adding cameras etc. soon
+    next_shader : ^Shader_Config
+}
+
+Shader_Chain_Config :: struct {
+    first_shader : ^Shader_Config,
+    descriptors : Descriptor_Layout_Config,
 }
 
 stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
@@ -44,8 +54,23 @@ stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
     return .VERTEX
 }
 
-create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config) -> (shader_set : Shader_Chain, ok : bool = true) {
-    current_cfg : ^Shader_Chain_Config = cfg
+create_shader_description :: proc(ctx : ^Context, cfg : Descriptor_Layout_Config, arena : ^Gpu_Arena) -> (desc: Shader_Description, ok : bool = true) {
+    desc.descriptors = create_descriptor_sets(ctx, cfg, arena) or_return
+    desc.layout = create_pipeline_layout(ctx, desc.descriptors)
+
+    return
+}
+
+destroy_shader_description :: proc(ctx : ^Context, desc: ^Shader_Description) {
+    destroy_pipeline_layout(ctx, desc.layout)
+    destroy_descriptor_sets(ctx, desc.descriptors)
+}
+
+create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, arena : ^Gpu_Arena) -> (shader_set : Shader_Chain, ok : bool = true) {
+    shader_set.descriptors = create_descriptor_sets(ctx, cfg.descriptors, arena) or_return
+    shader_set.layout = create_pipeline_layout(ctx, shader_set.descriptors)
+
+    current_cfg : ^Shader_Config = cfg.first_shader
 
     shaders : [dynamic]Shader
     defer delete(shaders)
@@ -56,41 +81,51 @@ create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config) -> (shader_set
         // Vulkan doesn't allow binding multiple shaders of the same type, so enforce that when loading a single set of shaders
         if current_cfg.stage in visited_stages {
             ok = false
+            log.error("Multiple shaders of the same type can't be bound together")
             return
         }
 
         visited_stages += {current_cfg.stage}
 
         shader_code : []byte
-        switch file in cfg.file {
-        case string:
-            err : os.Error
-            shader_code, err = os.read_entire_file(file, context.temp_allocator)
-            if (err != .NONE)
-            {
-                ok = false
-                return
-            }
-        case []byte:
-            shader_code = file
+        switch file in current_cfg.file {
+            case string:
+                err : os.Error
+                shader_code, err = os.read_entire_file(file, context.temp_allocator)
+                if (err != .NONE)
+                {
+                    ok = false
+                    log.error("Error reading shader file:", err)
+                    return
+                }
+            case []byte:
+                shader_code = file
         }
 
-        cname := strings.clone_to_cstring(cfg.entrypoint_name)
+        cname := strings.clone_to_cstring(current_cfg.entrypoint_name)
         defer delete(cname)
 
         cinfo : vk.ShaderCreateInfoEXT
         cinfo.sType = .SHADER_CREATE_INFO_EXT
         cinfo.flags = {}
-        cinfo.stage = {stage_to_vk_enum(cfg.stage)}
+        cinfo.stage = {stage_to_vk_enum(current_cfg.stage)}
         cinfo.codeType = .SPIRV
         cinfo.codeSize = len(shader_code)
         cinfo.pCode = &shader_code[0]
         cinfo.pName = cname
-        cinfo.setLayoutCount = u32(cfg.descriptors.set_count)
-        cinfo.pSetLayouts = &cfg.descriptors.layout[0]
+        cinfo.setLayoutCount = u32(len(shader_set.descriptors))
 
-        if cfg.next_shader != nil {
-            cinfo.nextStage = {stage_to_vk_enum(cfg.next_shader.stage)}
+        layouts := make([]vk.DescriptorSetLayout, len(shader_set.descriptors))
+        defer delete(layouts)
+
+        for i in 0..<len(shader_set.descriptors) {
+            layouts[i] = shader_set.descriptors[i].layout
+        }
+
+        cinfo.pSetLayouts = &layouts[0]
+
+        if current_cfg.next_shader != nil {
+            cinfo.nextStage = {stage_to_vk_enum(current_cfg.next_shader.stage)}
         }
 
         shader : Shader
@@ -100,10 +135,11 @@ create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config) -> (shader_set
         if res != .SUCCESS
         {
             ok = false
+            log.error("Error creating shaders:", res)
             return
         }
 
-        shader.stage = cfg.stage
+        shader.stage = current_cfg.stage
 
         append(&shaders, shader)
     }
@@ -145,4 +181,13 @@ unbind_shaders :: proc(cmd_buf : vk.CommandBuffer, shaders : Shader_Set) {
 
 destroy_shader :: proc(ctx: ^Context, shader: Shader) {
     vk.DestroyShaderEXT(ctx.device, shader.obj, {})
+}
+
+destroy_shader_chain :: proc(ctx : ^Context, chain : Shader_Chain) {
+    destroy_pipeline_layout(ctx, chain.layout)
+    destroy_descriptor_sets(ctx, chain.descriptors)
+
+    for shader in chain.shaders {
+        destroy_shader(ctx, shader)
+    }
 }
