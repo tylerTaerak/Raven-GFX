@@ -68,6 +68,7 @@ Asset_Handler :: struct {
 
     arena : gvk.Gpu_Arena,
     host_mem : gvk.Gpu_Arena,
+    uniforms_arena : gvk.Gpu_Arena,
 
     descriptors_raw : gvk.Gpu_Slice, // initialized to INITIAL_VERTEX_BYTE_COUNT
     index_data_raw  : gvk.Gpu_Slice, // initialized to INITIAL_INDEX_BYTE_COUNT
@@ -106,6 +107,8 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
 
     handler.host_mem = gvk.create_gpu_arena(Core_Context.backend, mem_cfg) or_return
 
+    handler.uniforms_arena = gvk.create_gpu_arena(Core_Context.backend, mem_cfg) or_return
+
     handler.write_fence = gvk.init_fence(Core_Context.backend)
 
     return
@@ -131,7 +134,7 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
     _reset_fence(Core_Context.backend, &handler.write_fence)
 
     // clear out the scratchpad
-    gvk.gpu_free(&handler.host_mem)
+    gvk.gpu_free_all(&handler.host_mem)
 
     _cycle_semaphores(handler)
 
@@ -225,8 +228,9 @@ destroy_asset_handler :: proc(handler : ^Asset_Handler) {
 
     gvk.destroy_fence(Core_Context.backend, handler.write_fence)
 
-    gvk.gpu_free(&handler.host_mem)
-    gvk.gpu_free(&handler.arena)
+    gvk.gpu_free_all(&handler.uniforms_arena)
+    gvk.gpu_free_all(&handler.host_mem)
+    gvk.gpu_free_all(&handler.arena)
 
     gvk.destroy_command_set(Core_Context.backend, &handler.commands)
 }

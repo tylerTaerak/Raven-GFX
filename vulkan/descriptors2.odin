@@ -47,6 +47,7 @@ create_descriptor_layout :: proc(ctx: ^Context, desc_configs : []core.Descriptor
     return layout
 }
 
+// TODO)) The descriptor set buffers need to be separate from general usage buffers, but that's the only separation we need aside from memory constraints
 create_descriptor_sets :: proc(ctx : ^Context, cfg : Descriptor_Layout_Config, arena : ^Gpu_Arena) -> (desc_sets : []Descriptor_Set, ok : bool = true) {
     desc_sets = make([]Descriptor_Set, len(cfg))
 

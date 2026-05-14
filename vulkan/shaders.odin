@@ -151,6 +151,25 @@ create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, arena : ^Gpu_A
     return
 }
 
+bind_shader_chain :: proc(ctx : ^Context, cmd_buf : vk.CommandBuffer, chain : Shader_Chain) {
+    bind_descriptor_sets(ctx, cmd_buf, chain.descriptors, chain.layout)
+
+    shader_set : [dynamic]vk.ShaderEXT
+    shader_stages : [dynamic]vk.ShaderStageFlags
+
+    defer delete(shader_stages)
+    defer delete(shader_set)
+
+    for shader in chain.shaders {
+        if shader.stage != nil {
+            append(&shader_set, shader.obj)
+            append(&shader_stages, vk.ShaderStageFlags{stage_to_vk_enum(shader.stage)})
+        }
+    }
+
+    vk.CmdBindShadersEXT(cmd_buf, u32(len(shader_set)), &shader_stages[0], &shader_set[0])
+}
+
 Shader_Set :: [core.Shader_Stage]^Shader
 
 
