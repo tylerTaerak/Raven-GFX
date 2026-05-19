@@ -53,8 +53,8 @@ Draw_Text :: struct {
 }
 
 Graphics_Shader :: struct {
-    vertex : gvk.Shader,
-    fragment : gvk.Shader
+    vertex : gvk.Shader_Chain,
+    fragment : gvk.Shader_Chain
 }
 
 Compute_Shader :: struct {
@@ -66,7 +66,7 @@ Shader_Set :: union { Graphics_Shader, Compute_Shader }
 Draw_Key :: struct {
     model : Model_Handle,
     render_target : Image,
-    shader : Shader_Set
+    shader : gvk.Shader_Chain
 }
 
 Draw_Map :: map[Draw_Key][dynamic]World_Transform
@@ -74,7 +74,7 @@ Draw_Map :: map[Draw_Key][dynamic]World_Transform
 // TODO)) Ideally, I think the way to manage this is to have everything held by the central context,
 // and just divvy out handles to all of these assets - then we can take something something take the hash
 // between the image and shader steps and that gives us a really good set of actually divisible jobs to run
-draw_model :: proc(model: Draw_Model, target: ^gvk.Render_Image, shader_steps : []Shader_Set) {
+draw_model :: proc(model: Draw_Model, target: ^gvk.Render_Image, shader_steps : []gvk.Shader_Chain) {
     for shader in shader_steps {
         key : Draw_Key
         key.model = model.model

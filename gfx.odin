@@ -16,18 +16,24 @@ Frame_Sync :: struct {
     present : Semaphore
 }
 
+// TODO)) I think I want to break this context down into smaller objects
 Context :: struct {
     backend         : ^Backend_Context,
+
     swapchain       : Swapchain(FRAMES_IN_FLIGHT),
-    frame_index     : int,
     window          : core.Window,
+
+    frame_index     : int,
+    current_frame   : Frame,
+
     camera          : core.Camera,
     main_cmd_set    : CommandSet,
-    descriptors     : Descriptor_Set,
-    main_shaders    : Graphics_Shader,
-    pipeline_layout : vk.PipelineLayout,
+    descriptors     : Descriptor_Set, // TODO)) DELETE
+    main_shaders    : gvk.Shader_Chain, // TODO)) DELETE - add a default set of shaders
+    pipeline_layout : vk.PipelineLayout, // TODO)) DELETE
+
     assets          : Asset_Handler,
-    current_frame   : Frame,
+
     draw_commands   : gvk.Host_Buffer(vk.DrawIndexedIndirectCommand),
     instances       : [FRAMES_IN_FLIGHT]gvk.Host_Buffer(World_Transform),
     draws           : Draw_Map
@@ -82,18 +88,24 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
 
     log.info("Created Pipeline Layout")
 
+    full_cfg : gvk.Shader_Chain_Config
     vert_cfg : gvk.Shader_Config
     vert_cfg.file = SHADERS_PATH + "vert.spv"
     vert_cfg.stage = .VERTEX
-    vert_cfg.descriptors = Core_Context.descriptors
+    vert_cfg.entrypoint_name = "main"
 
     frag_cfg : gvk.Shader_Config
     frag_cfg.file = SHADERS_PATH + "frag.spv"
     frag_cfg.stage = .FRAGMENT
-    frag_cfg.descriptors = Core_Context.descriptors
+    frag_cfg.entrypoint_name = "main"
+    vert_cfg.next_shader = &frag_cfg
 
-    Core_Context.main_shaders.vertex = gvk.create_shader(Core_Context.backend, &vert_cfg) or_return
-    Core_Context.main_shaders.fragment = gvk.create_shader(Core_Context.backend, &frag_cfg) or_return
+    full_cfg.first_shader = &vert_cfg
+    full_cfg.descriptors = {
+        {.UNIFORM},
+    }
+
+    Core_Context.main_shaders = gvk.create_shader(Core_Context.backend, &full_cfg) or_return
 
     log.info("Created Default Shader Objects")
 

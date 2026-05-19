@@ -47,8 +47,9 @@ create_descriptor_layout :: proc(ctx: ^Context, desc_configs : []core.Descriptor
     return layout
 }
 
-// TODO)) The descriptor set buffers need to be separate from general usage buffers, but that's the only separation we need aside from memory constraints
 create_descriptor_sets :: proc(ctx : ^Context, cfg : Descriptor_Layout_Config, arena : ^Gpu_Arena) -> (desc_sets : []Descriptor_Set, ok : bool = true) {
+    assert(arena.type == .DESCRIPTORS)
+
     desc_sets = make([]Descriptor_Set, len(cfg))
 
     for s_idx in 0..<len(cfg) {
@@ -75,7 +76,6 @@ create_descriptor_sets :: proc(ctx : ^Context, cfg : Descriptor_Layout_Config, a
         vk.GetDescriptorSetLayoutSizeEXT(ctx.device, set.layout, &required_size)
 
         // align size to desc_buf_props.descriptorBufferOffsetAlignment
-
         set.buffer = gpu_allocate(arena, int(required_size), int(desc_buf_props.descriptorBufferOffsetAlignment)) or_return
         set.bindings = make([]Descriptor_Data, len(cfg[s_idx]))
 
@@ -118,7 +118,7 @@ write_descriptor_buffer :: proc(ctx : ^Context, descriptors : []Descriptor_Set, 
 
     addr_info : vk.DescriptorAddressInfoEXT
     addr_info.sType = .DESCRIPTOR_ADDRESS_INFO_EXT
-    addr_info.address = get_device_address(ctx, write_data)
+    addr_info.address = get_device_address(write_data)
     addr_info.range = vk.DeviceSize(write_data.size)
 
     get_info : vk.DescriptorGetInfoEXT
@@ -128,7 +128,7 @@ write_descriptor_buffer :: proc(ctx : ^Context, descriptors : []Descriptor_Set, 
 
     vk.GetDescriptorEXT(ctx.device, &get_info,
         desc_buf_props.uniformBufferDescriptorSize,
-        get_host_pointer(arena, descriptors[set_index].bindings[binding_index].memory))
+        get_host_pointer(descriptors[set_index].bindings[binding_index].memory))
 }
 
 write_descriptor_image :: proc(ctx : ^Context, descriptors : []Descriptor_Set, set_index : int, binding_index : int, sampler : vk.Sampler, image : Render_Image, arena: ^Gpu_Arena) {
@@ -153,7 +153,7 @@ write_descriptor_image :: proc(ctx : ^Context, descriptors : []Descriptor_Set, s
 
     vk.GetDescriptorEXT(ctx.device, &get_info,
         desc_buf_props.combinedImageSamplerDescriptorSize,
-        get_host_pointer(arena, descriptors[set_index].bindings[binding_index].memory)
+        get_host_pointer(descriptors[set_index].bindings[binding_index].memory)
     )
 }
 
@@ -180,7 +180,7 @@ bind_descriptor_sets :: proc(ctx : ^Context, cmd_buf : vk.CommandBuffer, desc_se
 
         binding_info : vk.DescriptorBufferBindingInfoEXT
         binding_info.sType = .DESCRIPTOR_BUFFER_BINDING_INFO_EXT
-        binding_info.address = get_buffer_device_address(ctx, desc_sets[i].buffer)
+        binding_info.address = get_buffer_device_address(desc_sets[i].buffer)
         binding_info.usage = {.SAMPLER_DESCRIPTOR_BUFFER_EXT, .RESOURCE_DESCRIPTOR_BUFFER_EXT}
         buffer_bindings[desc_sets[i].buffer.block] = {binding_info, current_index}
 

@@ -17,7 +17,7 @@ Gpu_Arena :: struct {
     queue_families : []u32,
     usage_types : vk.BufferUsageFlags2,
     gpu_device : Gpu_Device,
-    memory_type : Memory_Type
+    type : Arena_Type
 }
 
 Gpu_Scratchpad :: struct {
@@ -47,30 +47,31 @@ Arena_Config :: struct {
     queue_families : QueueTypes,
     usage_types : vk.BufferUsageFlags2,
     block_size : int,
-    memory_type : Memory_Type
+    type : Arena_Type
 }
 
-Memory_Type :: enum {
+Arena_Type :: enum {
     DEVICE,
-    HOST_COHERENT
+    HOST,
+    DESCRIPTORS
 }
 
-get_buffer_device_address :: proc(ctx : ^Context, slice : Gpu_Slice) -> vk.DeviceAddress {
+get_buffer_device_address :: proc(slice : Gpu_Slice) -> vk.DeviceAddress {
     info : vk.BufferDeviceAddressInfoEXT
     info.sType = .BUFFER_DEVICE_ADDRESS_INFO_EXT
     info.buffer = get_underlying_buffer(slice.arena^, slice.block)
 
-    addr : vk.DeviceAddress = vk.GetBufferDeviceAddressEXT(ctx.device, &info)
+    addr : vk.DeviceAddress = vk.GetBufferDeviceAddressEXT(slice.arena.gpu_device.device^, &info)
     return addr
 }
 
-get_device_address :: proc(ctx : ^Context, slice : Gpu_Slice) -> vk.DeviceAddress {
-    addr : vk.DeviceAddress = get_buffer_device_address(ctx, slice)
+get_device_address :: proc(slice : Gpu_Slice) -> vk.DeviceAddress {
+    addr : vk.DeviceAddress = get_buffer_device_address(slice)
     return addr + vk.DeviceAddress(slice.offset)
 }
 
-get_host_pointer :: proc(arena : ^Gpu_Arena, slice : Gpu_Slice) -> rawptr {
-    block := arena.current_block
+get_host_pointer :: proc(slice : Gpu_Slice) -> rawptr {
+    block := slice.arena.current_block
     for {
         if block == nil {
             break
@@ -147,7 +148,7 @@ create_gpu_arena :: proc(ctx : ^Context, cfg : Arena_Config) -> (arena : Gpu_Are
     }
 
     arena.queue_families = {queue_fams.family_idx}
-    arena.memory_type = cfg.memory_type
+    arena.type = cfg.type
 
     _allocate_new_block(&arena)
     return
@@ -257,11 +258,13 @@ _allocate_new_block :: proc(arena : ^Gpu_Arena) -> (ok : bool = true) {
         gpu_block.block_index = arena.current_block.block_index + 1
     }
 
-    switch arena.memory_type {
+    switch arena.type {
         case .DEVICE:
             gpu_block.buffer, gpu_block.memory, ok = _allocate_device_local_memory(arena.gpu_device, gpu_block.size, arena.queue_families)
-        case .HOST_COHERENT:
-            gpu_block.buffer, gpu_block.memory, _, ok = _allocate_host_coherent_memory(arena.gpu_device, gpu_block.size, arena.queue_families)
+        case .HOST:
+            gpu_block.buffer, gpu_block.memory, gpu_block.host_memory, ok = _allocate_host_coherent_memory(arena.gpu_device, gpu_block.size, arena.queue_families)
+        case .DESCRIPTORS:
+
     }
 
     arena.current_block = gpu_block
@@ -270,12 +273,30 @@ _allocate_new_block :: proc(arena : ^Gpu_Arena) -> (ok : bool = true) {
 }
 
 _allocate_device_local_memory :: proc(gpu : Gpu_Device, size : int, q_fam_indices : []u32) -> (buffer : vk.Buffer, memory : vk.DeviceMemory, ok : bool = true) {
-    buffer, memory, ok = _allocate_gpu_memory(gpu.device, gpu.physical, size, q_fam_indices, {.DEVICE_LOCAL})
+    usage_flags : vk.BufferUsageFlags = {
+        .TRANSFER_SRC,
+        .TRANSFER_DST,
+        .INDIRECT_BUFFER,
+        .INDEX_BUFFER,
+        .UNIFORM_BUFFER,
+        .SHADER_DEVICE_ADDRESS_EXT
+    }
+
+    buffer, memory, ok = _allocate_gpu_memory(gpu.device, gpu.physical, size, q_fam_indices, usage_flags, {.DEVICE_LOCAL})
     return
 }
 
 _allocate_host_coherent_memory :: proc(gpu : Gpu_Device, size : int, q_fam_indices : []u32) -> (buffer : vk.Buffer, memory : vk.DeviceMemory, scratchpad : rawptr, ok : bool = true) {
-    buffer, memory, ok = _allocate_gpu_memory(gpu.device, gpu.physical, size, q_fam_indices, {.HOST_COHERENT, .HOST_VISIBLE})
+    usage_flags : vk.BufferUsageFlags = {
+        .TRANSFER_SRC,
+        .TRANSFER_DST,
+        .INDIRECT_BUFFER,
+        .INDEX_BUFFER,
+        .UNIFORM_BUFFER,
+        .SHADER_DEVICE_ADDRESS_EXT
+    }
+
+    buffer, memory, ok = _allocate_gpu_memory(gpu.device, gpu.physical, size, q_fam_indices, usage_flags, {.HOST_COHERENT, .HOST_VISIBLE})
 
     map_info : vk.MemoryMapInfo
     map_info.sType = .MEMORY_MAP_INFO
@@ -293,26 +314,42 @@ _allocate_host_coherent_memory :: proc(gpu : Gpu_Device, size : int, q_fam_indic
     return
 }
 
+_allocate_descriptor_memory :: proc(gpu : Gpu_Device, size : int, q_fam_indices : []u32) -> (buffer : vk.Buffer, memory : vk.DeviceMemory, scratchpad : rawptr, ok : bool = true) {
+    usage_flags : vk.BufferUsageFlags = {
+        .SAMPLER_DESCRIPTOR_BUFFER_EXT,
+        .RESOURCE_DESCRIPTOR_BUFFER_EXT,
+        .SHADER_DEVICE_ADDRESS_EXT
+    }
+
+    buffer, memory, ok = _allocate_gpu_memory(gpu.device, gpu.physical, size, q_fam_indices, usage_flags, {.HOST_COHERENT, .HOST_VISIBLE})
+
+    map_info : vk.MemoryMapInfo
+    map_info.sType = .MEMORY_MAP_INFO
+    map_info.memory = memory
+    map_info.size = vk.DeviceSize(size)
+    map_info.offset = 0
+    map_info.flags = {}
+
+    res := vk.MapMemory2(gpu.device^, &map_info, &scratchpad)
+
+    if res != .SUCCESS {
+        ok = false
+    }
+    return
+}
+
 _allocate_gpu_memory :: proc(
     gpu : ^vk.Device,
     physical_gpu : ^vk.PhysicalDevice,
     size : int,
     family_indices : []u32,
+    usage_flags : vk.BufferUsageFlags,
     mem_flags : vk.MemoryPropertyFlags) -> (buffer : vk.Buffer, memory : vk.DeviceMemory, ok : bool = true) {
 
     create_info : vk.BufferCreateInfo
     create_info.sType = .BUFFER_CREATE_INFO
     create_info.size = vk.DeviceSize(size)
-    create_info.usage = {
-        .TRANSFER_SRC,
-        .TRANSFER_DST,
-        .INDIRECT_BUFFER,
-        .INDEX_BUFFER,
-        .UNIFORM_BUFFER,
-        .SAMPLER_DESCRIPTOR_BUFFER_EXT,
-        .RESOURCE_DESCRIPTOR_BUFFER_EXT,
-        .SHADER_DEVICE_ADDRESS_EXT
-    }
+    create_info.usage = usage_flags
     create_info.queueFamilyIndexCount = u32(len(family_indices))
     create_info.pQueueFamilyIndices = &family_indices[0]
 

@@ -66,8 +66,8 @@ destroy_shader_description :: proc(ctx : ^Context, desc: ^Shader_Description) {
     destroy_descriptor_sets(ctx, desc.descriptors)
 }
 
-create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, arena : ^Gpu_Arena) -> (shader_set : Shader_Chain, ok : bool = true) {
-    shader_set.descriptors = create_descriptor_sets(ctx, cfg.descriptors, arena) or_return
+create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, descriptor_arena : ^Gpu_Arena) -> (shader_set : Shader_Chain, ok : bool = true) {
+    shader_set.descriptors = create_descriptor_sets(ctx, cfg.descriptors, descriptor_arena) or_return
     shader_set.layout = create_pipeline_layout(ctx, shader_set.descriptors)
 
     current_cfg : ^Shader_Config = cfg.first_shader

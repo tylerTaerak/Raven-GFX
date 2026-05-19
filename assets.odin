@@ -8,11 +8,6 @@ import "core:mem"
 
 MAX_VERTICES :: 512_000
 
-Shader_Set :: struct {
-    shaders : gvk.Shader_Chain,
-    descriptors : gvk.Descriptor_Collection
-}
-
 Model_Chunk :: struct {
     // offsets for GPU buffers
     vertex_offset   : uintptr,
@@ -92,7 +87,7 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
     mem_cfg : gvk.Arena_Config
     mem_cfg.queue_families = family_types
     mem_cfg.block_size = INITIAL_VERTEX_BYTE_COUNT
-    mem_cfg.memory_type = .DEVICE
+    mem_cfg.type = .DEVICE
 
     handler.arena = gvk.create_gpu_arena(Core_Context.backend, mem_cfg) or_return
 
@@ -102,7 +97,7 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
     handler.descriptors_raw = gvk.gpu_allocate(&handler.arena, INITIAL_VERTEX_BYTE_COUNT) or_return
     handler.index_data_raw = gvk.gpu_allocate(&handler.arena, INITIAL_INDEX_BYTE_COUNT) or_return
 
-    mem_cfg.memory_type = .HOST_COHERENT
+    mem_cfg.type = .HOST
     mem_cfg.block_size = SCRATCHPAD_SIZE
 
     handler.host_mem = gvk.create_gpu_arena(Core_Context.backend, mem_cfg) or_return
