@@ -39,6 +39,12 @@ Font_Asset :: struct {
 
 Font_Handle :: distinct u64
 
+Shader_Asset :: struct {
+    shader : gvk.Shader_Chain
+}
+
+Shader_Handle :: distinct u64
+
 Byte :: 1
 KiloByte :: 1024 * Byte
 MegaByte :: 1024 * KiloByte
@@ -57,6 +63,7 @@ INITIAL_INDEX_BYTE_COUNT        :: 2 * GigaByte
 Asset_Handler :: struct {
     commands    : gvk.Command_Set,
     models      : [dynamic]Model_Asset,
+    shaders     : [dynamic]Shader_Asset,
     gpu_queue_fam : ^gvk.QueueFamily,
     // textures    : [dynamic]Texture_Asset,
     // fonts       : [dynamic]Font_Asset,
@@ -64,6 +71,7 @@ Asset_Handler :: struct {
     arena : gvk.Gpu_Arena,
     host_mem : gvk.Gpu_Arena,
     uniforms_arena : gvk.Gpu_Arena,
+    descriptors_arena : gvk.Gpu_Arena,
 
     descriptors_raw : gvk.Gpu_Slice, // initialized to INITIAL_VERTEX_BYTE_COUNT
     index_data_raw  : gvk.Gpu_Slice, // initialized to INITIAL_INDEX_BYTE_COUNT
@@ -94,7 +102,7 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
     handler.gpu_queue_fam = gvk.find_queue_family_by_type(Core_Context.backend, family_types) or_return
     handler.commands = gvk.create_command_set(Core_Context.backend, 1, handler.gpu_queue_fam^) or_return
 
-    handler.descriptors_raw = gvk.gpu_allocate(&handler.arena, INITIAL_VERTEX_BYTE_COUNT) or_return
+    handler.descriptors_raw = gvk.gpu_allocate(&handler.descriptors_arena, INITIAL_VERTEX_BYTE_COUNT) or_return
     handler.index_data_raw = gvk.gpu_allocate(&handler.arena, INITIAL_INDEX_BYTE_COUNT) or_return
 
     mem_cfg.type = .HOST
@@ -105,6 +113,9 @@ create_asset_handler :: proc() -> (handler : Asset_Handler, ok : bool = true) {
     handler.uniforms_arena = gvk.create_gpu_arena(Core_Context.backend, mem_cfg) or_return
 
     handler.write_fence = gvk.init_fence(Core_Context.backend)
+
+    mem_cfg.usage_types = {.RESOURCE_DESCRIPTOR_BUFFER_EXT, .SAMPLER_DESCRIPTOR_BUFFER_EXT}
+    handler.descriptors_arena = gvk.create_gpu_arena(Core_Context.backend, mem_cfg) or_return
 
     return
 }
@@ -208,6 +219,15 @@ load_model :: proc(handler : ^Asset_Handler, filepath : string) -> (handle : Mod
     gvk.end_command_buffer(buf)
 
     gvk.submit_command_buffer(Core_Context.backend, buf, handler.gpu_queue_fam^, handler.prev_write_sem, handler.current_write_sem, handler.write_fence)
+
+    return
+}
+
+load_shader :: proc(handler : ^Asset_Handler, config : ^gvk.Shader_Chain_Config) -> (handle : Shader_Handle, ok : bool = true) {
+    chain := gvk.create_shader(Core_Context.backend, config, &handler.descriptors_arena) or_return
+
+    handle = Shader_Handle(len(handler.shaders))
+    append(&handler.shaders, Shader_Asset{chain})
 
     return
 }

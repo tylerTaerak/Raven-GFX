@@ -85,7 +85,7 @@ create_descriptor_sets :: proc(ctx : ^Context, cfg : Descriptor_Layout_Config, a
 
             size : int
             /// TODO)) I just need to remove the storage descriptor option from core
-            #partial switch cfg[s_idx][binding_idx] {
+            switch cfg[s_idx][binding_idx] {
                 case .UNIFORM:
                     size = desc_buf_props.uniformBufferDescriptorSize
                 case .IMAGE_SAMPLER:

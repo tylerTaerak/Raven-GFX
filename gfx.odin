@@ -28,9 +28,6 @@ Context :: struct {
 
     camera          : core.Camera,
     main_cmd_set    : CommandSet,
-    descriptors     : Descriptor_Set, // TODO)) DELETE
-    main_shaders    : gvk.Shader_Chain, // TODO)) DELETE - add a default set of shaders
-    pipeline_layout : vk.PipelineLayout, // TODO)) DELETE
 
     assets          : Asset_Handler,
 
@@ -69,25 +66,6 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
     
     log.info("initialized graphics context")
 
-    desc_cfg : Descriptor_Config
-    desc_cfg.count = FRAMES_IN_FLIGHT
-    desc_cfg.type_count[.STORAGE] = 6
-    desc_cfg.type_count[.UNIFORM] = 1
-
-    Core_Context.descriptors = _create_descriptor_set(Core_Context.backend, desc_cfg) or_return
-
-    log.info("Initialized Descriptor Sets")
-
-    layout_info : vk.PipelineLayoutCreateInfo
-    layout_info.sType = .PIPELINE_LAYOUT_CREATE_INFO
-    layout_info.setLayoutCount = u32(len(Core_Context.descriptors.layout))
-    layout_info.pSetLayouts = &Core_Context.descriptors.layout[0]
-    layout_info.flags = {}
-
-    vk.CreatePipelineLayout(Core_Context.backend.device, &layout_info, {}, &Core_Context.pipeline_layout)
-
-    log.info("Created Pipeline Layout")
-
     full_cfg : gvk.Shader_Chain_Config
     vert_cfg : gvk.Shader_Config
     vert_cfg.file = SHADERS_PATH + "vert.spv"
@@ -105,10 +83,6 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
         {.UNIFORM},
     }
 
-    Core_Context.main_shaders = gvk.create_shader(Core_Context.backend, &full_cfg) or_return
-
-    log.info("Created Default Shader Objects")
-
     Core_Context.assets = create_asset_handler() or_return
 
     log.info("Created Asset Handler")
@@ -118,7 +92,6 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
 
     for i in 0..<FRAMES_IN_FLIGHT {
         Core_Context.instances[i] = gvk.create_host_buffer(Core_Context.backend, World_Transform, 512000, {fam^}, {.STORAGE_BUFFER, .TRANSFER_DST})
-        gvk.update_descriptor_set(Core_Context.backend, &Core_Context.descriptors, u32(i), 5, Core_Context.instances[i].internal_buffer)
     }
 
     return
@@ -262,14 +235,7 @@ shutdown :: proc() {
     }
     gvk.destroy_host_buffer(Core_Context.backend, Core_Context.draw_commands)
 
-    vk.DestroyPipelineLayout(Core_Context.backend.device, Core_Context.pipeline_layout, {})
-
     destroy_asset_handler(&Core_Context.assets)
-
-    gvk.destroy_shader(Core_Context.backend, Core_Context.main_shaders.vertex)
-    gvk.destroy_shader(Core_Context.backend, Core_Context.main_shaders.fragment)
-
-    _destroy_descriptor_set(Core_Context.backend, &Core_Context.descriptors)
 
     _destroy_command_set(Core_Context.backend, &Core_Context.main_cmd_set)
 

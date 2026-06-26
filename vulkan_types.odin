@@ -5,10 +5,6 @@ import vulk "./vulkan"
 
 Backend_Context             :: vulk.Context
 Swapchain                   :: vulk.Swapchain
-Pipeline                    :: vulk.Pipeline
-Pipeline_Config             :: vulk.Pipeline_Config
-Descriptor_Set              :: vulk.Descriptor_Collection
-Descriptor_Config           :: vulk.Descriptor_Config
 Buffer                      :: vulk.Buffer
 Host_Buffer                 :: vulk.Host_Buffer
 Buffer_Slice                :: vulk.Buffer_Slice

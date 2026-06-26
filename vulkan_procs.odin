@@ -38,12 +38,6 @@ _destroy_context            :: vulk.destroy_context
 _create_swapchain           :: vulk.create_swapchain
 _destroy_swapchain          :: vulk.destroy_swapchain
 
-_create_pipeline            :: vulk.create_pipeline
-_destroy_pipeline           :: vulk.destroy_pipeline
-
-_create_descriptor_set      :: vulk.create_descriptor_set
-_destroy_descriptor_set     :: vulk.destroy_descriptor_set
-
 _create_buffer              :: vulk.create_buffer
 _create_host_buffer         :: vulk.create_host_buffer
 _slice_buffer               :: vulk.make_slice
@@ -77,7 +71,6 @@ _end_command_buffer         :: vulk.end_command_buffer
 _submit_command_buffer      :: vulk.submit_command_buffer
 
 _acquire_swapchain_image    :: vulk.acquire_next_image_index
-_draw                       :: vulk.draw_rendering
 _present_image              :: vulk.present_image
 
 _create_semaphore           :: vulk.init_semaphore

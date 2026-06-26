@@ -9,7 +9,6 @@ Descriptor_Data_Type :: enum {
 }
 
 Descriptor_Type :: enum {
-    STORAGE,
     UNIFORM,
     IMAGE_SAMPLER
 }

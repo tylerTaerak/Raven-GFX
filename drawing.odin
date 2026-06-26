@@ -66,7 +66,7 @@ Shader_Set :: union { Graphics_Shader, Compute_Shader }
 Draw_Key :: struct {
     model : Model_Handle,
     render_target : Image,
-    shader : gvk.Shader_Chain
+    shader : Shader_Handle
 }
 
 Draw_Map :: map[Draw_Key][dynamic]World_Transform
@@ -74,7 +74,7 @@ Draw_Map :: map[Draw_Key][dynamic]World_Transform
 // TODO)) Ideally, I think the way to manage this is to have everything held by the central context,
 // and just divvy out handles to all of these assets - then we can take something something take the hash
 // between the image and shader steps and that gives us a really good set of actually divisible jobs to run
-draw_model :: proc(model: Draw_Model, target: ^gvk.Render_Image, shader_steps : []gvk.Shader_Chain) {
+draw_model_with_target_and_shader :: proc(model: Draw_Model, target: ^gvk.Render_Image, shader_steps : []Shader_Handle) {
     for shader in shader_steps {
         key : Draw_Key
         key.model = model.model
@@ -88,6 +88,23 @@ draw_model :: proc(model: Draw_Model, target: ^gvk.Render_Image, shader_steps : 
             Core_Context.draws[key] = { model.pose } // start the dynamic array off
         }
     }
+}
+
+draw_model_with_shader :: proc(model: Draw_Model, shader_steps : []Shader_Handle) {
+}
+
+draw_model_with_target :: proc(model: Draw_Model, target : ^gvk.Render_Image) {
+}
+
+draw_model_defaults :: proc(model: Draw_Model) {
+    // draw_model_with_target_and_shader(model, DEFAULT_RENDER_TARGET, DEFAULT_MODEL_SHADER)
+}
+
+draw_model :: proc{
+    draw_model_with_target_and_shader,
+    draw_model_with_shader,
+    draw_model_with_target,
+    draw_model_defaults,
 }
 
 draw_sprite :: proc(sprite: Draw_Sprite, target: ^gvk.Render_Image, shader_steps : []Shader_Set) {
@@ -215,30 +232,32 @@ commit_draw_commands :: proc(cmd_buf : vk.CommandBuffer, draw_commands : gvk.Hos
 
         vk.CmdSetColorBlendEquationEXT(cmd_buf, 0, 1, &eqs[0])
 
+        shader_chain := &Core_Context.assets.shaders[key.shader]
 
-        switch &s in key.shader {
-            case Graphics_Shader:
-                stage_flags : []vk.ShaderStageFlags = {{.VERTEX}, {.FRAGMENT}}
-                shaders : []vk.ShaderEXT = {s.vertex.obj, s.fragment.obj}
-                vk.CmdBindShadersEXT(cmd_buf, 2, &stage_flags[0], &shaders[0])
-            case Compute_Shader:
-                stage_flags : vk.ShaderStageFlags = {.COMPUTE}
-                vk.CmdBindShadersEXT(cmd_buf, 1, &stage_flags, &s.shader.obj)
-
+        stage_flags : [dynamic]vk.ShaderStageFlags
+        shaders : [dynamic]vk.ShaderEXT
+        for s in shader_chain.shader.shaders {
+            append(&stage_flags, vk.ShaderStageFlags{gvk.stage_to_vk_enum(s.stage)})
+            append(&shaders, s.obj)
         }
 
-        // big TODO)) - I'm trying to separate out the descriptor sets from being in the central context, so this bit isn't going to fly right now.
-        // I would like to have a way to map Shader Objects with descriptor sets and PipelineLayouts and have that sent in as a single, larger "Shader" object.
-        // The core context should have a set of default shaders that it uses that utilizes this new methodology, and a user should be able to override them
-        bind_info : vk.BindDescriptorSetsInfo
-        bind_info.sType = .BIND_DESCRIPTOR_SETS_INFO
-        bind_info.descriptorSetCount = 1
-        bind_info.pDescriptorSets = &Core_Context.descriptors.set[0]
-        bind_info.stageFlags = {.VERTEX, .FRAGMENT, .COMPUTE}
-        bind_info.firstSet = 0
-        bind_info.layout = Core_Context.pipeline_layout
+        vk.CmdBindShadersEXT(cmd_buf, u32(len(shader_chain.shader.shaders)), &stage_flags[0], &shaders[0])
 
-        vk.CmdBindDescriptorSets2KHR(cmd_buf, &bind_info)
+        binds : [dynamic]vk.DescriptorBufferBindingInfoEXT
+        for &d, i in shader_chain.shader.descriptors {
+            bind_info : vk.DescriptorBufferBindingInfoEXT
+            bind_info.sType = .DESCRIPTOR_BUFFER_BINDING_INFO_EXT
+            bind_info.usage = {.RESOURCE_DESCRIPTOR_BUFFER_EXT, .SAMPLER_DESCRIPTOR_BUFFER_EXT, .SHADER_DEVICE_ADDRESS_EXT}
+            bind_info.address = gvk.get_device_address(shader_chain.shader.descriptors[i].buffer)
+
+            for &data, j in shader_chain.shader.descriptors[i].bindings {
+                offset : vk.DeviceSize = vk.DeviceSize(data.memory.offset)
+                buffer_idx : u32 = 0
+                vk.CmdSetDescriptorBufferOffsetsEXT(cmd_buf, .GRAPHICS, shader_chain.shader.layout, u32(j), 1, &buffer_idx, &offset)
+            }
+        }
+
+        vk.CmdBindDescriptorBuffersEXT(cmd_buf, u32(len(binds)), &binds[0])
 
         vk.CmdBindIndexBuffer(cmd_buf, gvk.get_underlying_buffer(Core_Context.assets.arena, Core_Context.assets.index_data_raw.block), 0, .UINT16)
 
@@ -266,12 +285,6 @@ get_next_frame :: proc(ctx: ^Context, fence_index: int) -> (image: Frame, ok : b
     image.image.size = {u32(ctx.window.w), u32(ctx.window.h)}
 
     return
-}
-
-draw :: proc {
-    draw_model,
-    draw_sprite,
-    draw_text,
 }
 
 present_frame :: proc(ctx: ^Context, image: Frame) {
