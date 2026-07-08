@@ -5,6 +5,7 @@ import "core:log"
 import "../core"
 import vk "vendor:vulkan"
 import "core:strings"
+import gmem "../../gpu_mem"
 
 Shader_Description :: struct {
     descriptors : []Descriptor_Set,
@@ -32,7 +33,8 @@ Shader_Config :: struct {
 
 Shader_Chain_Config :: struct {
     first_shader : ^Shader_Config,
-    descriptors : Descriptor_Layout_Config,
+    descriptor_layout : []core.Descriptor_Type,
+    descriptor_set_count : int
 }
 
 stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
@@ -54,8 +56,12 @@ stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
     return .VERTEX
 }
 
-create_shader_description :: proc(ctx : ^Context, cfg : Descriptor_Layout_Config, arena : ^Gpu_Arena) -> (desc: Shader_Description, ok : bool = true) {
-    desc.descriptors = create_descriptor_sets(ctx, cfg, arena) or_return
+create_shader_description :: proc(ctx : ^Context, 
+    $N : int,
+    cfg : [$Size]core.Descriptor_Type,
+    memory : gmem.Memory_Block(.DESCRIPTORS)) -> (desc: Shader_Description, ok : bool = true) {
+
+    desc.descriptors = create_descriptor_sets(ctx, cfg, memory) or_return
     desc.layout = create_pipeline_layout(ctx, desc.descriptors)
 
     return
@@ -66,8 +72,8 @@ destroy_shader_description :: proc(ctx : ^Context, desc: ^Shader_Description) {
     destroy_descriptor_sets(ctx, desc.descriptors)
 }
 
-create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, descriptor_arena : ^Gpu_Arena) -> (shader_set : Shader_Chain, ok : bool = true) {
-    shader_set.descriptors = create_descriptor_sets(ctx, cfg.descriptors, descriptor_arena) or_return
+create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, descriptor_memory : ^gmem.Memory_Block(.DESCRIPTORS)) -> (shader_set : Shader_Chain, ok : bool = true) {
+    shader_set.descriptors = create_descriptor_sets(ctx, cfg.descriptor_set_count, cfg.descriptor_layout, descriptor_memory) or_return
     shader_set.layout = create_pipeline_layout(ctx, shader_set.descriptors)
 
     current_cfg : ^Shader_Config = cfg.first_shader

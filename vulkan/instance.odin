@@ -8,10 +8,9 @@ import "core:mem"
 import "core:strings"
 
 create_vulkan_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
+     // get number of extensions for SDL to use
     ext_count : u32
-    sdl_ext := sdl.Vulkan_GetInstanceExtensions(&ext_count) // get number of extensions for SDL to use
-
-    // vk.EXT_VALIDATION_FLAGS_EXTENSION_NAME
+    sdl_ext := sdl.Vulkan_GetInstanceExtensions(&ext_count)
 
     vk_layers : []cstring
     vk_extensions : [dynamic]cstring

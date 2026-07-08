@@ -1,7 +1,7 @@
 {
 	"$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
 	"collections": [
-		{ "name": "odin_libs", "path": "/home/tyler/odin_libs" }
+		{ "name": "odin_libs", "path": "/home/tyler.conley/.local/odin_libs" }
 	],
     "enable_format": true,
 	"enable_semantic_tokens": true,

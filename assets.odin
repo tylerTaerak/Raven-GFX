@@ -6,6 +6,8 @@ import gvk "./vulkan"
 import "./core"
 import "core:mem"
 
+// import "../gpu_mem" // TODO))  I guess I need to continue doing it this way until I figue out how the heck imports ought to work in Odin
+ 
 MAX_VERTICES :: 512_000
 
 Model_Chunk :: struct {

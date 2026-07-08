@@ -1,3 +1,4 @@
+// TODO)) This part may be more apt as an external package, similar to what we're doing with buffers now... TBD
 package game_vulkan
 
 import vk "vendor:vulkan"

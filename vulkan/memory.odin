@@ -1,3 +1,4 @@
+// TODO)) We don't need this anymore - use external gpu-memory package
 package game_vulkan
 
 import "core:mem"

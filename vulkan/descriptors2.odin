@@ -3,20 +3,21 @@ package game_vulkan
 import vk "vendor:vulkan"
 import "../core"
 import "core:mem"
+import gmem "../../gpu_mem" // TODO)) Import something normal plz
 
 Descriptor :: struct {
-    buffer : Gpu_Slice,
+    buffer : gmem.Bytes(.DESCRIPTORS),
     layout : vk.DescriptorSetLayout,
     binding : u32
 }
 
 Descriptor_Data :: struct {
     type : core.Descriptor_Type,
-    memory : Gpu_Slice
+    memory : gmem.Bytes(.DESCRIPTORS)
 }
 
 Descriptor_Set :: struct {
-    buffer : Gpu_Slice,
+    buffer : gmem.Bytes(.DESCRIPTORS),
     bindings : []Descriptor_Data,
     layout   : vk.DescriptorSetLayout
 }
@@ -47,16 +48,18 @@ create_descriptor_layout :: proc(ctx: ^Context, desc_configs : []core.Descriptor
     return layout
 }
 
-create_descriptor_sets :: proc(ctx : ^Context, cfg : Descriptor_Layout_Config, arena : ^Gpu_Arena) -> (desc_sets : []Descriptor_Set, ok : bool = true) {
-    assert(arena.type == .DESCRIPTORS)
+create_descriptor_sets :: proc(ctx : ^Context,
+    set_count : int,
+    cfg : []core.Descriptor_Type,
+    memory : ^gmem.Memory_Block(.DESCRIPTORS)) -> (desc_sets : []Descriptor_Set, ok : bool = true) {
 
-    desc_sets = make([]Descriptor_Set, len(cfg))
+    desc_sets = make([]Descriptor_Set, set_count)
 
-    for s_idx in 0..<len(cfg) {
+    for s_idx in 0..<set_count {
         set : ^Descriptor_Set = &desc_sets[s_idx]
-        set.bindings = make([]Descriptor_Data, len(cfg[s_idx]))
+        set.bindings = make([]Descriptor_Data, len(cfg))
 
-        set.layout = create_descriptor_layout(ctx, cfg[s_idx])
+        set.layout = create_descriptor_layout(ctx, cfg)
 
         desc_buf_props : vk.PhysicalDeviceDescriptorBufferPropertiesEXT
         desc_buf_props.sType = .PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT
@@ -76,26 +79,26 @@ create_descriptor_sets :: proc(ctx : ^Context, cfg : Descriptor_Layout_Config, a
         vk.GetDescriptorSetLayoutSizeEXT(ctx.device, set.layout, &required_size)
 
         // align size to desc_buf_props.descriptorBufferOffsetAlignment
-        set.buffer = gpu_allocate(arena, int(required_size), int(desc_buf_props.descriptorBufferOffsetAlignment)) or_return
-        set.bindings = make([]Descriptor_Data, len(cfg[s_idx]))
+        err : gmem.Error
+        set.buffer, err = gmem.galloc(memory, required_size, desc_buf_props.descriptorBufferOffsetAlignment)
+        set.bindings = make([]Descriptor_Data, len(cfg))
 
-        for binding_idx in 0..<len(cfg[s_idx]) {
+        for binding_idx in 0..<len(cfg) {
             required_offset : vk.DeviceSize
             vk.GetDescriptorSetLayoutBindingOffsetEXT(ctx.device, set.layout, u32(binding_idx), &required_offset)
 
             size : int
-            /// TODO)) I just need to remove the storage descriptor option from core
-            switch cfg[s_idx][binding_idx] {
+            switch cfg[binding_idx] {
                 case .UNIFORM:
                     size = desc_buf_props.uniformBufferDescriptorSize
                 case .IMAGE_SAMPLER:
                     size = desc_buf_props.combinedImageSamplerDescriptorSize
             }
 
-            binding_mem := slice(set.buffer, int(required_offset), size)
+            binding_mem := gmem.gslice(set.buffer, int(required_offset), size)
 
             data : Descriptor_Data
-            data.type = cfg[s_idx][binding_idx]
+            data.type = cfg[binding_idx]
             data.memory = binding_mem
 
             set.bindings[binding_idx] = data
@@ -128,7 +131,7 @@ write_descriptor_buffer :: proc(ctx : ^Context, descriptors : []Descriptor_Set, 
 
     vk.GetDescriptorEXT(ctx.device, &get_info,
         desc_buf_props.uniformBufferDescriptorSize,
-        get_host_pointer(descriptors[set_index].bindings[binding_index].memory))
+        gmem.host_pointer(descriptors[set_index].bindings[binding_index].memory))
 }
 
 write_descriptor_image :: proc(ctx : ^Context, descriptors : []Descriptor_Set, set_index : int, binding_index : int, sampler : vk.Sampler, image : Render_Image, arena: ^Gpu_Arena) {
@@ -153,11 +156,11 @@ write_descriptor_image :: proc(ctx : ^Context, descriptors : []Descriptor_Set, s
 
     vk.GetDescriptorEXT(ctx.device, &get_info,
         desc_buf_props.combinedImageSamplerDescriptorSize,
-        get_host_pointer(descriptors[set_index].bindings[binding_index].memory)
+        gmem.host_pointer(descriptors[set_index].bindings[binding_index].memory)
     )
 }
 
-bind_descriptor_sets :: proc(ctx : ^Context, cmd_buf : vk.CommandBuffer, desc_sets : []Descriptor_Set, layout : vk.PipelineLayout) {
+bind_descriptor_sets :: proc(ctx : ^Context, cmd_buf : vk.CommandBuffer, desc_sets : []Descriptor_Set, layout : vk.PipelineLayout, ) {
     Info_Index_Pair :: struct {
         info : vk.DescriptorBufferBindingInfoEXT,
         index : int
@@ -170,29 +173,18 @@ bind_descriptor_sets :: proc(ctx : ^Context, cmd_buf : vk.CommandBuffer, desc_se
     defer delete(buffer_indices)
     defer delete_map(buffer_bindings)
 
-    current_index := 0
+    binding_info : vk.DescriptorBufferBindingInfoEXT
+    binding_info.sType = .DESCRIPTOR_BUFFER_BINDING_INFO_EXT
+    binding_info.usage = {.RESOURCE_DESCRIPTOR_BUFFER_EXT, .SAMPLER_DESCRIPTOR_BUFFER_EXT}
+
+    // TODO)) Just supporting one memory block for descriptors right now - later I can add support back for passing multiple buffers here
     for i in 0..<len(desc_sets) {
-        if desc_sets[i].buffer.block in buffer_bindings {
-            append(&buffer_indices, u32(buffer_bindings[desc_sets[i].buffer.block].index))
-            append(&buffer_offsets, vk.DeviceSize(desc_sets[i].buffer.offset))
-            continue
-        }
-
-        binding_info : vk.DescriptorBufferBindingInfoEXT
-        binding_info.sType = .DESCRIPTOR_BUFFER_BINDING_INFO_EXT
-        binding_info.address = get_buffer_device_address(desc_sets[i].buffer)
-        binding_info.usage = {.SAMPLER_DESCRIPTOR_BUFFER_EXT, .RESOURCE_DESCRIPTOR_BUFFER_EXT}
-        buffer_bindings[desc_sets[i].buffer.block] = {binding_info, current_index}
-
-        current_index += 1
+        binding_info.address = gmem.device_pointer({ctx.device, ctx.phys_dev, {}}, desc_sets[i].buffer.block^)
+        append(&buffer_indices, 0)
+        append(&buffer_offsets, vk.DeviceSize(desc_sets[i].buffer.offset))
     }
 
-    buffer_infos := make([]vk.DescriptorBufferBindingInfoEXT, len(buffer_bindings))
-    for _, v in buffer_bindings {
-        buffer_infos[v.index] = v.info
-    }
-
-    vk.CmdBindDescriptorBuffersEXT(cmd_buf, u32(len(buffer_infos)), &buffer_infos[0])
+    vk.CmdBindDescriptorBuffersEXT(cmd_buf, 1, &binding_info)
     vk.CmdSetDescriptorBufferOffsetsEXT(
         cmd_buf,
         .GRAPHICS,

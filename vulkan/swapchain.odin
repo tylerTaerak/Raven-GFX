@@ -12,6 +12,9 @@ SwapchainSupport :: struct {
     present_modes   : []vk.PresentModeKHR
 }
 
+// Really, a swapchain just contains a series of Render_Images, plus some various configuration data
+// And I think most of this configuration data is baked into the swapchain creation - so...
+// I think it is basically a set of Render Images with a Swapchain Handle
 Swapchain :: struct ($Frame_Count : int) {
     chain           : vk.SwapchainKHR,
     images          : [Frame_Count]vk.Image,

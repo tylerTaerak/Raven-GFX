@@ -11,11 +11,22 @@ import "core:log"
 import gfx_core "../core"
 
 
+// TODO)) There shouldn't really be a "central context" at this level -
+// separate these things out into their own data pieces,
+// which will be used by the rendering engine one layer up
+//
+// it stands to reason that things that aren't included here could fit well as separate libraries,
+// like what I've done with the GPU memory allocator
 Context :: struct {
     // init fields
+    // --- These should be the "Instance Data"
     instance            : vk.Instance,
     debug_messenger     : vk.DebugUtilsMessengerEXT,
+
+    // --- This should be the "Window Data"
     window_surface      : vk.SurfaceKHR,
+
+    // --- This should be the "Device Data"
     phys_dev            : vk.PhysicalDevice,
     device              : vk.Device,
     queues              : []QueueFamily
@@ -55,6 +66,7 @@ create_context :: proc(window: ^gfx_core.Window, vulkan_extensions: []string) ->
     return
 }
 
+// TODO)) It might be worthwhile to have the "wait/signal" pattern be a common pattern throughout the project
 acquire_next_image_index :: proc(ctx: ^Context, swapchain: ^$S/Swapchain($N), fence: Fence, semaphore: Semaphore) -> (index: u32, ok : bool = true) {
     res := vk.AcquireNextImageKHR(ctx.device, swapchain.chain, 500, semaphore, fence, &index)
 
