@@ -1,5 +1,26 @@
 #version 460
 
+#extension GL_EXT_buffer_reference : require
+
+// TODO)) I need to have a pointer somewhere passed back up through the CPU-side program in order
+// to use a fully bindless thing like I have here. I'll have to push some metadata up with mesh
+// data in order to get the correct pointers;
+layout(buffer_reference) buffer Position;
+layout(std430, buffer_reference, buffer_reference_align = 16) writeonly buffer Position
+{
+    vec4 positions[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 8) readonly buffer PositionReference
+{
+    Position buffers[];
+};
+
+layout(std430, push_constant) uniform Registers
+{
+    PositionReference references;
+} registers;
+
 layout(std430, set = 0, binding = 0) readonly buffer position_buffer {
     vec4 positions[];
 };
