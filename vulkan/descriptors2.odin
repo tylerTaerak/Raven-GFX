@@ -89,6 +89,8 @@ create_descriptor_sets :: proc(ctx : ^Context,
 
             size : int
             switch cfg[binding_idx] {
+                case .STORAGE:
+                    size = desc_buf_props.storageBufferDescriptorSize
                 case .UNIFORM:
                     size = desc_buf_props.uniformBufferDescriptorSize
                 case .IMAGE_SAMPLER:

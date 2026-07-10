@@ -5,6 +5,8 @@ import vk "vendor:vulkan"
 
 _to_vk_descriptor_type :: proc(type: core.Descriptor_Type) -> vk.DescriptorType {
     switch (type) {
+        case .STORAGE:
+            return .STORAGE_BUFFER
         case .UNIFORM:
             return .UNIFORM_BUFFER
         case .IMAGE_SAMPLER:
