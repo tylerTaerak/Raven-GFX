@@ -20,6 +20,7 @@ create_window :: proc(title : string, w, h : int, flags: WindowCreateFlags) -> (
     window.title = title
 
     window.window_ptr = sdl.CreateWindow(strings.clone_to_cstring(title), i32(w), i32(h), flags)
+
     return
 }
 

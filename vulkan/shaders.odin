@@ -5,7 +5,7 @@ import "core:log"
 import "../core"
 import vk "vendor:vulkan"
 import "core:strings"
-import gmem "../../gpu_mem"
+import gmem "shared:gpu-memory"
 
 Shader_Description :: struct {
     descriptors : []Descriptor_Set,
@@ -56,25 +56,26 @@ stage_to_vk_enum :: proc(stage : core.Shader_Stage) -> vk.ShaderStageFlag
     return .VERTEX
 }
 
-create_shader_description :: proc(ctx : ^Context, 
+create_shader_description :: proc(
+	device : Device,
     $N : int,
     cfg : [$Size]core.Descriptor_Type,
     memory : gmem.Memory_Block(.DESCRIPTORS)) -> (desc: Shader_Description, ok : bool = true) {
 
-    desc.descriptors = create_descriptor_sets(ctx, cfg, memory) or_return
-    desc.layout = create_pipeline_layout(ctx, desc.descriptors)
+    desc.descriptors = create_descriptor_sets(device, cfg, memory) or_return
+    desc.layout = create_pipeline_layout(device, desc.descriptors)
 
     return
 }
 
-destroy_shader_description :: proc(ctx : ^Context, desc: ^Shader_Description) {
-    destroy_pipeline_layout(ctx, desc.layout)
-    destroy_descriptor_sets(ctx, desc.descriptors)
+destroy_shader_description :: proc(device : Device, desc: ^Shader_Description) {
+    // destroy_pipeline_layout(device, desc.layout)
+    // destroy_descriptor_sets(device, desc.descriptors)
 }
 
-create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, descriptor_memory : ^gmem.Memory_Block(.DESCRIPTORS)) -> (shader_set : Shader_Chain, ok : bool = true) {
-    shader_set.descriptors = create_descriptor_sets(ctx, cfg.descriptor_set_count, cfg.descriptor_layout, descriptor_memory) or_return
-    shader_set.layout = create_pipeline_layout(ctx, shader_set.descriptors)
+create_shader :: proc(device : Device, cfg : ^Shader_Chain_Config, descriptor_memory : ^gmem.Memory_Block(.DESCRIPTORS)) -> (shader_set : Shader_Chain, ok : bool = true) {
+    shader_set.descriptors = create_descriptor_sets(device, cfg.descriptor_set_count, cfg.descriptor_layout, descriptor_memory) or_return
+    // shader_set.layout = create_pipeline_layout(device, shader_set.descriptors)
 
     current_cfg : ^Shader_Config = cfg.first_shader
 
@@ -136,7 +137,7 @@ create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, descriptor_mem
 
         shader : Shader
 
-        res := vk.CreateShadersEXT(ctx.device, 1, &cinfo, {}, &shader.obj)
+        res := vk.CreateShadersEXT(device.core, 1, &cinfo, {}, &shader.obj)
 
         if res != .SUCCESS
         {
@@ -157,62 +158,62 @@ create_shader :: proc(ctx : ^Context, cfg : ^Shader_Chain_Config, descriptor_mem
     return
 }
 
-bind_shader_chain :: proc(ctx : ^Context, cmd_buf : vk.CommandBuffer, chain : Shader_Chain) {
-    bind_descriptor_sets(ctx, cmd_buf, chain.descriptors, chain.layout)
+// bind_shader_chain :: proc(ctx : ^Context, cmd_buf : vk.CommandBuffer, chain : Shader_Chain) {
+//     bind_descriptor_sets(ctx, cmd_buf, chain.descriptors, chain.layout)
+// 
+//     shader_set : [dynamic]vk.ShaderEXT
+//     shader_stages : [dynamic]vk.ShaderStageFlags
+// 
+//     defer delete(shader_stages)
+//     defer delete(shader_set)
+// 
+//     for shader in chain.shaders {
+//         if shader.stage != nil {
+//             append(&shader_set, shader.obj)
+//             append(&shader_stages, vk.ShaderStageFlags{stage_to_vk_enum(shader.stage)})
+//         }
+//     }
+// 
+//     vk.CmdBindShadersEXT(cmd_buf, u32(len(shader_set)), &shader_stages[0], &shader_set[0])
+// }
+// 
+// Shader_Set :: [core.Shader_Stage]^Shader
+// 
+// 
+// bind_shaders :: proc(cmd_buf : vk.CommandBuffer, shaders : Shader_Set) {
+//     vk_set : [dynamic]vk.ShaderEXT
+//     vk_stages : [dynamic]vk.ShaderStageFlags
+//     for stage in core.Shader_Stage {
+//         if shaders[stage] != nil {
+//             append(&vk_set, shaders[stage].obj)
+//             append(&vk_stages, vk.ShaderStageFlags{stage_to_vk_enum(stage)})
+//         }
+//     }
+// 
+//     vk.CmdBindShadersEXT(cmd_buf, u32(len(vk_set)), &vk_stages[0], &vk_set[0])
+// }
+// 
+// unbind_shaders :: proc(cmd_buf : vk.CommandBuffer, shaders : Shader_Set) {
+//     stages : [dynamic]vk.ShaderStageFlags
+//     for stage in core.Shader_Stage {
+//         if shaders[stage] != nil {
+//             append(&stages, vk.ShaderStageFlags{stage_to_vk_enum(stage)})
+//         }
+//     }
+// 
+//     vk.CmdBindShadersEXT(cmd_buf, u32(len(stages)), &stages[0], nil)
+// }
 
-    shader_set : [dynamic]vk.ShaderEXT
-    shader_stages : [dynamic]vk.ShaderStageFlags
 
-    defer delete(shader_stages)
-    defer delete(shader_set)
+destroy_shader :: proc(device : Device, shader: Shader) {
+    vk.DestroyShaderEXT(device.core, shader.obj, {})
+}
+
+destroy_shader_chain :: proc(device : Device, chain : Shader_Chain) {
+    // destroy_pipeline_layout(device, chain.layout)
+    // destroy_descriptor_sets(device, chain.descriptors)
 
     for shader in chain.shaders {
-        if shader.stage != nil {
-            append(&shader_set, shader.obj)
-            append(&shader_stages, vk.ShaderStageFlags{stage_to_vk_enum(shader.stage)})
-        }
-    }
-
-    vk.CmdBindShadersEXT(cmd_buf, u32(len(shader_set)), &shader_stages[0], &shader_set[0])
-}
-
-Shader_Set :: [core.Shader_Stage]^Shader
-
-
-bind_shaders :: proc(cmd_buf : vk.CommandBuffer, shaders : Shader_Set) {
-    vk_set : [dynamic]vk.ShaderEXT
-    vk_stages : [dynamic]vk.ShaderStageFlags
-    for stage in core.Shader_Stage {
-        if shaders[stage] != nil {
-            append(&vk_set, shaders[stage].obj)
-            append(&vk_stages, vk.ShaderStageFlags{stage_to_vk_enum(stage)})
-        }
-    }
-
-    vk.CmdBindShadersEXT(cmd_buf, u32(len(vk_set)), &vk_stages[0], &vk_set[0])
-}
-
-unbind_shaders :: proc(cmd_buf : vk.CommandBuffer, shaders : Shader_Set) {
-    stages : [dynamic]vk.ShaderStageFlags
-    for stage in core.Shader_Stage {
-        if shaders[stage] != nil {
-            append(&stages, vk.ShaderStageFlags{stage_to_vk_enum(stage)})
-        }
-    }
-
-    vk.CmdBindShadersEXT(cmd_buf, u32(len(stages)), &stages[0], nil)
-}
-
-
-destroy_shader :: proc(ctx: ^Context, shader: Shader) {
-    vk.DestroyShaderEXT(ctx.device, shader.obj, {})
-}
-
-destroy_shader_chain :: proc(ctx : ^Context, chain : Shader_Chain) {
-    destroy_pipeline_layout(ctx, chain.layout)
-    destroy_descriptor_sets(ctx, chain.descriptors)
-
-    for shader in chain.shaders {
-        destroy_shader(ctx, shader)
+        destroy_shader(device, shader)
     }
 }

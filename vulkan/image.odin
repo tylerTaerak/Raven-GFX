@@ -12,7 +12,7 @@ Render_Image :: struct {
     size : [2]u32
 }
 
-create_image :: proc(ctx: ^Context, size: [2]u32, format: core.Image_Format, usage: core.Image_Usage) -> (img: Render_Image, ok: bool=true) {
+create_image :: proc(device : Device, size: [2]u32, format: core.Image_Format, usage: core.Image_Usage) -> (img: Render_Image, ok: bool=true) {
     image_info : vk.ImageCreateInfo
     image_info.sType = .IMAGE_CREATE_INFO
     image_info.format = _to_vk_image_format(format)
@@ -33,12 +33,12 @@ create_image :: proc(ctx: ^Context, size: [2]u32, format: core.Image_Format, usa
         image_info.initialLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL
     }
 
-    queue_fams := find_queue_family_by_type(ctx, {.GRAPHICS}) or_return
+    queue_fams : u32 = u32(find_queue_family_by_type(device.queues, {.GRAPHICS}) or_return)
 
     image_info.queueFamilyIndexCount = 1
-    image_info.pQueueFamilyIndices = &queue_fams.family_idx
+    image_info.pQueueFamilyIndices = &queue_fams
 
-    res := vk.CreateImage(ctx.device, &image_info, {}, &img.image)
+    res := vk.CreateImage(device.core, &image_info, {}, &img.image)
 
     ok = res == .SUCCESS
 
@@ -63,7 +63,7 @@ create_image :: proc(ctx: ^Context, size: [2]u32, format: core.Image_Format, usa
         layerCount = 1
     }
 
-    res = vk.CreateImageView(ctx.device, &view_info, {}, &img.view)
+    res = vk.CreateImageView(device.core, &view_info, {}, &img.view)
 
     img.size = size
 
@@ -72,7 +72,35 @@ create_image :: proc(ctx: ^Context, size: [2]u32, format: core.Image_Format, usa
     return
 }
 
-destroy_image :: proc(ctx: ^Context, image: ^Render_Image) {
-    vk.DestroyImageView(ctx.device, image.view, {})
-    vk.DestroyImage(ctx.device, image.image, {})
+image_barrier :: proc(
+	cmd : Command_Buffer,
+	image : Render_Image,
+	old_layout, new_layout : vk.ImageLayout,
+	old_access_mask, new_access_mask : vk.AccessFlags2,
+	old_stage_mask, new_stage_mask : vk.PipelineStageFlags2) {
+
+	barrier : vk.ImageMemoryBarrier2KHR
+	barrier.sType = .IMAGE_MEMORY_BARRIER_2_KHR
+	barrier.image = image.image
+	barrier.oldLayout = old_layout
+	barrier.newLayout = new_layout
+	barrier.subresourceRange.aspectMask = {.COLOR}
+	barrier.subresourceRange.layerCount = 1
+	barrier.subresourceRange.levelCount = 1
+	barrier.srcAccessMask = old_access_mask
+	barrier.dstAccessMask = new_access_mask
+	barrier.srcStageMask = old_stage_mask
+	barrier.dstStageMask = new_stage_mask
+
+	dependencies : vk.DependencyInfoKHR
+	dependencies.sType = .DEPENDENCY_INFO_KHR
+	dependencies.imageMemoryBarrierCount = 1
+	dependencies.pImageMemoryBarriers = &barrier
+
+	vk.CmdPipelineBarrier2KHR(cmd, &dependencies)
+}
+
+destroy_image :: proc(device : Device, image: Render_Image) {
+    vk.DestroyImageView(device.core, image.view, {})
+    vk.DestroyImage(device.core, image.image, {})
 }

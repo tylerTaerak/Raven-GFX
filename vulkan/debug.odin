@@ -32,7 +32,7 @@ _debug_callback :: proc "c" (severity        : vk.DebugUtilsMessageSeverityFlags
     return true
 }
 
-create_debug_messenger :: proc(ctx : ^Context) -> (ok: bool) {
+create_debug_messenger :: proc(instance : vk.Instance) -> (messenger: vk.DebugUtilsMessengerEXT, ok: bool) {
     ok = true
 
     severities : vk.DebugUtilsMessageSeverityFlagsEXT
@@ -53,7 +53,7 @@ create_debug_messenger :: proc(ctx : ^Context) -> (ok: bool) {
 
     // it doesn't seem like this EXT layer is getting instantiated properly, causing a
     // segfault here
-    res := vk.CreateDebugUtilsMessengerEXT(ctx.instance, &create_info, {}, &ctx.debug_messenger)
+    res := vk.CreateDebugUtilsMessengerEXT(instance, &create_info, {}, &messenger)
 
     if res != .SUCCESS {
         log.error("Error creating debug messenger:", res)
@@ -61,4 +61,8 @@ create_debug_messenger :: proc(ctx : ^Context) -> (ok: bool) {
     }
 
     return
+}
+
+destroy_debug_messenger :: proc(instance : vk.Instance, messenger : vk.DebugUtilsMessengerEXT) {
+	vk.DestroyDebugUtilsMessengerEXT(instance, messenger, {})
 }

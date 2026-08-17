@@ -13,13 +13,7 @@ Fence :: vk.Fence
 
 Semaphore :: vk.Semaphore
 
-Frame_Sync :: struct {
-    in_flight : Fence,
-    image_acquired : Semaphore,
-    render_finished : Semaphore
-}
-
-init_timeline :: proc(ctx: ^Context) -> Timeline {
+init_timeline :: proc(device : Device) -> Timeline {
     type_info : vk.SemaphoreTypeCreateInfo
     type_info.sType = .SEMAPHORE_TYPE_CREATE_INFO
     type_info.semaphoreType = .TIMELINE
@@ -30,7 +24,7 @@ init_timeline :: proc(ctx: ^Context) -> Timeline {
     create_info.pNext = &type_info
 
     timeline : Timeline
-    vk.CreateSemaphore(ctx.device, &create_info, {}, &timeline.sem)
+    vk.CreateSemaphore(device.core, &create_info, {}, &timeline.sem)
 
     return timeline
 }
@@ -54,61 +48,49 @@ tick :: proc(timeline: ^Timeline) -> u64 {
     return val
 }
 
-destroy_timeline :: proc(ctx: ^Context, timeline: ^Timeline) {
-    vk.DestroySemaphore(ctx.device, timeline.sem, {})
+destroy_timeline :: proc(device : Device, timeline: ^Timeline) {
+    vk.DestroySemaphore(device.core, timeline.sem, {})
 }
 
-init_fence :: proc(ctx: ^Context) -> (fence: Fence) {
+init_fence :: proc(device : Device) -> (fence: Fence) {
     info : vk.FenceCreateInfo
     info.sType = .FENCE_CREATE_INFO
     
-    vk.CreateFence(ctx.device, &info, {}, &fence)
+    vk.CreateFence(device.core, &info, {}, &fence)
     return
 }
 
-wait_for_fence :: proc(ctx: ^Context, fence: ^Fence) {
-    vk.WaitForFences(ctx.device, 1, fence, true, 100_000)
+wait_for_fence :: proc(device : Device, fence: Fence) {
+	fence := fence
+    vk.WaitForFences(device.core, 1, &fence, true, 100_000)
 }
 
-wait_for_fences :: proc(ctx: ^Context, fences: []Fence) {
-    vk.WaitForFences(ctx.device, u32(len(fences)), &fences[0], true, 100_000);
+wait_for_fences :: proc(device : Device, fences: []Fence) {
+    vk.WaitForFences(device.core, u32(len(fences)), &fences[0], true, 100_000);
 }
 
-reset_fence :: proc(ctx: ^Context, fence: ^Fence) {
-    vk.ResetFences(ctx.device, 1, fence)
+reset_fence :: proc(device : Device, fence: Fence) {
+	fence := fence
+    vk.ResetFences(device.core, 1, &fence)
 }
 
-reset_fences :: proc(ctx: ^Context, fences: []Fence) {
-    vk.ResetFences(ctx.device, u32(len(fences)), &fences[0])
+reset_fences :: proc(device : Device, fences: []Fence) {
+    vk.ResetFences(device.core, u32(len(fences)), &fences[0])
 }
 
-destroy_fence :: proc(ctx: ^Context, fence: Fence) {
-    vk.DestroyFence(ctx.device, fence, {})
+destroy_fence :: proc(device : Device, fence: Fence) {
+    vk.DestroyFence(device.core, fence, {})
 }
 
-init_semaphore :: proc(ctx: ^Context) -> (sem : Semaphore) {
+init_semaphore :: proc(device : Device) -> (sem : Semaphore) {
     info : vk.SemaphoreCreateInfo
     info.sType = .SEMAPHORE_CREATE_INFO
     info.flags = {}
 
-    vk.CreateSemaphore(ctx.device, &info, {}, &sem)
+    vk.CreateSemaphore(device.core, &info, {}, &sem)
     return
 }
 
-destroy_semaphore :: proc(ctx: ^Context, sem : Semaphore) {
-    vk.DestroySemaphore(ctx.device, sem, {})
-}
-
-init_frame_sync :: proc(ctx: ^Context) -> (sync : Frame_Sync) {
-    sync.in_flight = init_fence(ctx)
-    sync.image_acquired = init_semaphore(ctx)
-    sync.render_finished = init_semaphore(ctx)
-
-    return
-}
-
-destroy_frame_sync :: proc(ctx: ^Context, sync: ^Frame_Sync) {
-    destroy_semaphore(ctx, sync.render_finished)
-    destroy_semaphore(ctx, sync.image_acquired)
-    destroy_fence(ctx, sync.in_flight)
+destroy_semaphore :: proc(device : Device, sem : Semaphore) {
+    vk.DestroySemaphore(device.core, sem, {})
 }

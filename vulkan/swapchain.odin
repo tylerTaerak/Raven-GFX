@@ -1,9 +1,6 @@
 package game_vulkan
 
-import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
-import "../core"
-
 import "core:log"
 
 SwapchainSupport :: struct {
@@ -17,46 +14,43 @@ SwapchainSupport :: struct {
 // I think it is basically a set of Render Images with a Swapchain Handle
 Swapchain :: struct ($Frame_Count : int) {
     chain           : vk.SwapchainKHR,
-    images          : [Frame_Count]vk.Image,
-    views           : [Frame_Count]vk.ImageView,
-    sync            : [Frame_Count]Frame_Sync,
-    window_ptr      : ^sdl.Window,
-    format          : vk.SurfaceFormatKHR,
-    extent          : vk.Extent2D,
-    present_mode    : vk.PresentModeKHR
+	render_images 	: [Frame_Count]Render_Image,
+    surface      	: vk.SurfaceKHR,
 }
 
-create_swapchain :: proc(ctx : ^Context, window : ^sdl.Window, $N: int, previous_swapchain : ^Swapchain(N)) -> (chain: Swapchain(N), ok : bool) {
-    support := _get_swapchain_support(ctx) or_return
+create_swapchain :: proc(
+	device : Device,
+	surface : vk.SurfaceKHR,
+	w, h: u32,
+	$Num_Frames: int,
+	previous_swapchain : ^Swapchain(Num_Frames)) -> (chain: Swapchain(Num_Frames), ok : bool) {
 
-    w, h : i32
-    sdl.GetWindowSizeInPixels(window, &w, &h)
+    support := _get_swapchain_support(device, surface) or_return
 
-    chain.format = _pick_swap_surface_format(support)
-    chain.present_mode = _pick_swap_present_mode(support)
-    chain.extent = _pick_swap_extent(support, u32(w), u32(h)) // TODO)) figure out a way to get window dimensions here
-    chain.window_ptr = window
+    format := _pick_swap_surface_format(support)
+    present_mode := _pick_swap_present_mode(support)
+    extent := _pick_swap_extent(support, w, h)
 
     if support.capabilities.maxImageCount == 0 {
         log.error("No images available for swapchain")
         ok = false
     }
 
-    image_count : u32 = clamp(support.capabilities.minImageCount + 1, support.capabilities.minImageCount, support.capabilities.maxImageCount)
-    // TODO)) I might need to determine whether a graphics queue family is distinct from a family that supports presentKHR
-    supported_family, _ := find_queue_family_present_support(ctx)
-    queue_indices : []u32 = {supported_family.family_idx}
+	chain.surface = surface
+
+    image_count : u32 = clamp(u32(Num_Frames), support.capabilities.minImageCount, support.capabilities.maxImageCount)
+    supported_family := u32(find_queue_family_present_support(device, device.queues, surface) or_return)
 
     create_info : vk.SwapchainCreateInfoKHR
     create_info.sType = .SWAPCHAIN_CREATE_INFO_KHR
-    create_info.imageFormat = chain.format.format
-    create_info.imageColorSpace = chain.format.colorSpace
-    create_info.presentMode = chain.present_mode
-    create_info.imageExtent = chain.extent
+    create_info.imageFormat = format.format
+    create_info.imageColorSpace = format.colorSpace
+    create_info.presentMode = present_mode
+    create_info.imageExtent = extent
     create_info.minImageCount = image_count
     create_info.imageArrayLayers = 1
     create_info.imageUsage = {.COLOR_ATTACHMENT}
-    create_info.surface = ctx.window_surface
+    create_info.surface = surface
 
     // reuse any applicable resources
     if previous_swapchain != nil { 
@@ -64,83 +58,83 @@ create_swapchain :: proc(ctx : ^Context, window : ^sdl.Window, $N: int, previous
     }
 
     create_info.imageSharingMode = .EXCLUSIVE
-    create_info.queueFamilyIndexCount = u32(len(queue_indices))
-    create_info.pQueueFamilyIndices = &queue_indices[0]
+    create_info.queueFamilyIndexCount = 1
+    create_info.pQueueFamilyIndices = &supported_family
 
     create_info.preTransform = support.capabilities.currentTransform
     create_info.compositeAlpha = {.OPAQUE}
     create_info.clipped = true
 
-    res := vk.CreateSwapchainKHR(ctx.device, &create_info, {}, &chain.chain)
+    res := vk.CreateSwapchainKHR(device.core, &create_info, {}, &chain.chain)
     if res != .SUCCESS {
         log.error("Error creating swapchain:", res)
         ok = false
     }
 
-    img_count := u32(N)
-    vk.GetSwapchainImagesKHR(ctx.device, chain.chain, &img_count, &chain.images[0])
+    img_count := u32(Num_Frames)
+	images : [Num_Frames]vk.Image
+    vk.GetSwapchainImagesKHR(device.core, chain.chain, &img_count, &images[0])
 
-    chain.views, ok = _create_image_views(ctx.device, chain)
+	views : [Num_Frames]vk.ImageView
+    views, ok = _create_image_views(device.core, images, format)
 
-    for i in 0..<N {
-        chain.sync[i] = init_frame_sync(ctx)
-    }
+	for i in 0..<Num_Frames {
+		chain.render_images[i].size = {
+			extent.width,
+			extent.height
+		}
+
+		chain.render_images[i].image = images[i]
+		chain.render_images[i].view = views[i]
+	}
 
     log.info("Created Swapchain", chain.chain)
 
     return
 }
 
-recreate_swapchain :: proc(ctx: ^Context, swapchain: ^$S/Swapchain($N)) -> (ok: bool = true) {
-    w, h : i32
-    sdl.GetWindowSizeInPixels(swapchain.window_ptr, &w, &h)
-    if w == 0 || h == 0  {
-        log.info("Found invalid window size, skipping frame")
-        ok = false
-        return
-    }
-
+recreate_swapchain :: proc(device : Device, swapchain: ^$S/Swapchain($N), w, h : u32) -> (ok: bool = true) {
     wait_for_idle(ctx)
 
     old_chain := swapchain^
 
-    swapchain^, ok = create_swapchain(ctx, swapchain.window_ptr, len(swapchain.images), swapchain)
+    swapchain^, ok = create_swapchain(device, {}, w, h, N, swapchain)
 
     if !ok {
         log.error("Error recreating swapchain")
         swapchain^ = old_chain
     } else {
-        destroy_swapchain(ctx, &old_chain)
+        destroy_swapchain(device, old_chain)
     }
 
     return
 }
 
 
-_get_swapchain_support :: proc(ctx : ^Context) -> (support : SwapchainSupport, ok : bool) {
+_get_swapchain_support :: proc(device : Device, surface : vk.SurfaceKHR) -> (support : SwapchainSupport, ok : bool) {
     ok = true
 
-    res := vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.phys_dev, ctx.window_surface, &support.capabilities)
+    res := vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(device.physical, surface, &support.capabilities)
     if res != .SUCCESS {
         log.error("Error retrieving surface capabilities for swapchain support detection")
         ok = false
     }
 
     format_count : u32
-    vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.phys_dev, ctx.window_surface, &format_count, nil)
+    vk.GetPhysicalDeviceSurfaceFormatsKHR(device.physical, surface, &format_count, nil)
 
     log.info("Found", format_count, "color formats for physical device")
 
     support.formats = make([]vk.SurfaceFormatKHR, format_count)
-    vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.phys_dev, ctx.window_surface, &format_count, &support.formats[0])
+    vk.GetPhysicalDeviceSurfaceFormatsKHR(device.physical, surface, &format_count, &support.formats[0])
 
     log.info("PHysical device formats:", support.formats)
 
     pm_count : u32
-    vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.phys_dev, ctx.window_surface, &pm_count, nil)
+    vk.GetPhysicalDeviceSurfacePresentModesKHR(device.physical, surface, &pm_count, nil)
 
     support.present_modes = make([]vk.PresentModeKHR, pm_count)
-    vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.phys_dev, ctx.window_surface, &pm_count, &support.present_modes[0])
+    vk.GetPhysicalDeviceSurfacePresentModesKHR(device.physical, surface, &pm_count, &support.present_modes[0])
 
     if format_count == 0 || pm_count == 0 {
         log.error("Unable to properly retrieve swapchain support details")
@@ -189,15 +183,15 @@ _pick_swap_extent :: proc(sc_support : SwapchainSupport, w, h : u32) -> (extent 
 }
 
 
-_create_image_views :: proc(device : vk.Device, swapchain : Swapchain($N)) -> (views : [N]vk.ImageView, ok : bool) {
+_create_image_views :: proc(device : vk.Device, images : [$N]vk.Image, format : vk.SurfaceFormatKHR) -> (views : [N]vk.ImageView, ok : bool) {
     ok = true
 
-    for img, idx in swapchain.images {
+    for i in 0..<N {
         create_info : vk.ImageViewCreateInfo
         create_info.sType = .IMAGE_VIEW_CREATE_INFO
-        create_info.image = img
+        create_info.image = images[i]
         create_info.viewType = .D2
-        create_info.format = swapchain.format.format
+        create_info.format = format.format
 
         create_info.components.r = .IDENTITY
         create_info.components.g = .IDENTITY
@@ -210,9 +204,9 @@ _create_image_views :: proc(device : vk.Device, swapchain : Swapchain($N)) -> (v
         create_info.subresourceRange.baseArrayLayer = 0
         create_info.subresourceRange.layerCount = 1
 
-        res := vk.CreateImageView(device, &create_info, {}, &views[idx])
+        res := vk.CreateImageView(device, &create_info, {}, &views[i])
         if res != .SUCCESS {
-            log.error("Error creating image view for index", idx)
+            log.error("Error creating image view for index", i)
             ok = false
         }
     }
@@ -220,14 +214,11 @@ _create_image_views :: proc(device : vk.Device, swapchain : Swapchain($N)) -> (v
     return
 }
 
-destroy_swapchain :: proc(ctx: ^Context, chain: ^$S/Swapchain($N)) {
+destroy_swapchain :: proc(device : Device, chain: $S/Swapchain($N)) {
     for i in 0..<N {
-        destroy_frame_sync(ctx, &chain.sync[i])
+        vk.DestroyImageView(device.core, chain.render_images[i].view, {})
     }
 
-    for i in 0..<N {
-        vk.DestroyImageView(ctx.device, chain.views[i], {})
-    }
-
-    vk.DestroySwapchainKHR(ctx.device, chain.chain, {})
+	vk.DestroySwapchainKHR(device.core, chain.chain, {})
+	vk.DestroySurfaceKHR(device.instance.core, chain.surface, {})
 }

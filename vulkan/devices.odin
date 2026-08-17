@@ -4,6 +4,28 @@ import vk "vendor:vulkan"
 
 import "core:log"
 import "core:strings"
+import vmem "core:mem/virtual"
+
+Device :: struct {
+	core : vk.Device,
+	physical : vk.PhysicalDevice,
+	queues : []QueueFamily,
+	instance : Instance
+}
+
+create_device :: proc(instance : Instance, types : QueueTypes, dev_extensions : []string) -> (device : Device, ok : bool = true) {
+	device.instance = instance
+	device.physical = pick_physical_device(instance.core, dev_extensions) or_return
+	device.queues = populate_queue_family_properties(device.physical) or_return
+	device.core = create_logical_device(device.physical, device.queues, types, dev_extensions) or_return
+
+	return
+}
+
+destroy_device :: proc(device : Device) {
+	delete(device.queues)
+	vk.DestroyDevice(device.core, {})
+}
 
 _validate_device :: proc(device : vk.PhysicalDevice, extension_names : []string) -> bool {
     ext_count : u32
@@ -12,13 +34,28 @@ _validate_device :: proc(device : vk.PhysicalDevice, extension_names : []string)
     extensions := make([]vk.ExtensionProperties, ext_count)
     vk.EnumerateDeviceExtensionProperties(device, nil, &ext_count, &extensions[0])
 
+	name_arena : vmem.Arena
+	err := vmem.arena_init_growing(&name_arena)
+	defer vmem.arena_destroy(&name_arena)
+
+	if err != .None {
+		return false
+	}
+
+	name_alloc := vmem.arena_allocator(&name_arena)
+
     outer: for name in extension_names {
         for &ext in extensions {
-            if name == strings.trim_right_null(string(ext.extensionName[:])) {
+			ext_string := strings.clone_from_bytes(ext.extensionName[:], name_alloc)
+			ext_string = strings.trim_right_null(ext_string)
+			ext_string = strings.trim_left_null(ext_string)
+
+            if name == ext_string {
                 continue outer
             }
         }
 
+		log.error("Unable to find extension:", name)
         // if the loop makes it to this point, the device didn't find an extension
         return false
     }
@@ -26,57 +63,54 @@ _validate_device :: proc(device : vk.PhysicalDevice, extension_names : []string)
     return true
 }
 
-pick_physical_device :: proc(ctx : ^Context, vulkan_extensions: []string) -> (ok : bool) {
-    ok = true
-
+pick_physical_device :: proc(instance : vk.Instance, vulkan_extensions: []string) -> (dev : vk.PhysicalDevice, ok : bool) {
     device_count : u32
-    vk.EnumeratePhysicalDevices(ctx.instance, &device_count, nil)
+    vk.EnumeratePhysicalDevices(instance, &device_count, nil)
 
     devices := make([]vk.PhysicalDevice, device_count)
-    vk.EnumeratePhysicalDevices(ctx.instance, &device_count, &devices[0])
+    vk.EnumeratePhysicalDevices(instance, &device_count, &devices[0])
 
     if device_count == 0 {
         log.error("No GPUs with Vulkan support available!")
         ok = false
     }
 
-    ctx.phys_dev = devices[0]
     for d in devices {
         if _validate_device(d, vulkan_extensions) {
             props : vk.PhysicalDeviceProperties
             vk.GetPhysicalDeviceProperties(d, &props)
             log.info("Selecting device", string(props.deviceName[:]), "for rendering")
-            ctx.phys_dev = d
+            dev = d
+			ok = true
             break
         }
     }
 
+	if !ok {
+		log.warn("Unable to find a suitable graphics device")
+	}
+
     return
 }
 
-create_logical_device :: proc(ctx : ^Context, types : QueueTypes, vulkan_extensions : []string) -> (ok : bool) {
+create_logical_device :: proc(physical : vk.PhysicalDevice, queues : []QueueFamily, types : QueueTypes, device_extensions : []string) -> (device : vk.Device, ok : bool) {
     ok = true
 
     // assume if graphics is in `types` that we want present support for it
-    queues : [dynamic]QueueFamily
-    defer delete(queues)
+    all_queues : [dynamic]QueueFamily
+    defer delete(all_queues)
 
     for type in types {
-        fam : ^QueueFamily
-        switch {
-            case type == .GRAPHICS:
-                fam, ok = find_queue_family_present_support(ctx)
-            case:
-                fam, ok = find_queue_family_by_type(ctx, {type})
-
-        }
+		fam_idx : int
+		// present support will have to be queried later
+		fam_idx, ok = find_queue_family_by_type(queues, {type})
 
         if !ok {
-            log.error("Unable to find queue familieis for graphics device for type", type)
+            log.error("Unable to find queue families for graphics device for type", type)
             continue
         }
 
-        append(&queues, fam^)
+        append(&all_queues, queues[fam_idx])
     }
 
     real_queues : [dynamic]QueueFamily
@@ -104,16 +138,33 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes, vulkan_extensi
         q_create_infos[i] = q_create_info
     }
 
-    required_extensions_cstr := make([]cstring, len(vulkan_extensions))
+    required_extensions_cstr := make([]cstring, len(device_extensions))
     defer delete(required_extensions_cstr)
 
-    for ext, i in vulkan_extensions {
-        required_extensions_cstr[i] = strings.clone_to_cstring(ext)
+	cstring_arena : vmem.Arena
+	err := vmem.arena_init_growing(&cstring_arena)
+	defer vmem.arena_destroy(&cstring_arena)
+
+	if err != .None {
+		ok = false
+		return
+	}
+
+	cstring_alloc := vmem.arena_allocator(&cstring_arena)
+
+
+    for ext, i in device_extensions {
+        required_extensions_cstr[i] = strings.clone_to_cstring(ext, cstring_alloc)
     }
+
+	untyped_ptrs_feature : vk.PhysicalDeviceShaderUntypedPointersFeaturesKHR
+	untyped_ptrs_feature.sType = .PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR
+	untyped_ptrs_feature.shaderUntypedPointers = true
 
     desc_buffers_feature : vk.PhysicalDeviceDescriptorBufferFeaturesEXT
     desc_buffers_feature.sType = .PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT
     desc_buffers_feature.descriptorBuffer = true
+	desc_buffers_feature.pNext = &untyped_ptrs_feature
 
     mesh_shaders_feature : vk.PhysicalDeviceMeshShaderFeaturesEXT
     mesh_shaders_feature.sType = .PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT
@@ -195,13 +246,15 @@ create_logical_device :: proc(ctx : ^Context, types : QueueTypes, vulkan_extensi
     create_info.enabledExtensionCount = u32(len(required_extensions_cstr))
     create_info.ppEnabledExtensionNames = &required_extensions_cstr[0]
 
-    res := vk.CreateDevice(ctx.phys_dev, &create_info, {}, &ctx.device)
+    res := vk.CreateDevice(physical, &create_info, {}, &device)
     if res != .SUCCESS {
         log.error("Error creating logical device", res)
         ok = false
     }
 
-    vk.load_proc_addresses_device(ctx.device)
+	log.debug("Loading procedure addresses for device")
+
+    vk.load_proc_addresses_device(device)
 
     return
 }

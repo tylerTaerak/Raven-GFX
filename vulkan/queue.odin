@@ -1,23 +1,43 @@
 package game_vulkan
 
 import vk "vendor:vulkan"
+import "../core"
 
 import "core:log"
 
-QueueType :: vk.QueueFlag
-QueueTypes :: vk.QueueFlags
+QueueType :: core.Queue_Type
+QueueTypes :: bit_set[QueueType]
 
 QueueFamily :: struct {
     family_idx      : u32,
     queue_count     : u32,
     family_types    : QueueTypes,
-    surface_support : b32
 }
 
-find_queue_family_by_type :: proc(ctx : ^Context, types : QueueTypes) -> (fam : ^QueueFamily, ok : bool = false) {
-    for &family in ctx.queues {
+_to_vk_queue_flags :: proc(types : QueueTypes) -> vk.QueueFlags {
+	flags : vk.QueueFlags
+
+	for t in types {
+		flags += {_to_vk_queue_type(t)}
+	}
+
+	return flags
+}
+
+_to_raven_queue_types :: proc(types : vk.QueueFlags) -> QueueTypes {
+	flags : QueueTypes
+
+	for t in types {
+		flags += {_to_raven_queue_type(t)}
+	}
+
+	return flags
+}
+
+find_queue_family_by_type :: proc(families : []QueueFamily, types : QueueTypes) -> (fam_idx : int, ok : bool = false) {
+    for &family, idx in families {
         if types & family.family_types == types {
-            fam = &family
+            fam_idx = idx
             ok = true
             return
         }
@@ -27,10 +47,18 @@ find_queue_family_by_type :: proc(ctx : ^Context, types : QueueTypes) -> (fam : 
     return
 }
 
-find_queue_family_present_support :: proc(ctx : ^Context) -> (fam : ^QueueFamily, ok : bool = false) {
-    for &family in ctx.queues {
-        if family.surface_support && .GRAPHICS in family.family_types {
-            fam = &family
+find_queue_family_present_support :: proc(device : Device, families : []QueueFamily, window : vk.SurfaceKHR) -> (fam_idx : int, ok : bool = false) {
+    for &family, idx in families {
+		surface_support : b32
+		res := vk.GetPhysicalDeviceSurfaceSupportKHR(device.physical, u32(idx), window, &surface_support)
+
+		if res != .SUCCESS {
+			ok = false
+			return
+		}
+
+        if surface_support {
+            fam_idx = idx
             ok = true
         }
     }
@@ -38,30 +66,25 @@ find_queue_family_present_support :: proc(ctx : ^Context) -> (fam : ^QueueFamily
     return
 }
 
-_populate_queue_family_properties :: proc(ctx : ^Context) -> (ok : bool = true) {
+populate_queue_family_properties :: proc(device : vk.PhysicalDevice) -> (families : []QueueFamily, ok : bool = true) {
     fam_count : u32
-    vk.GetPhysicalDeviceQueueFamilyProperties(ctx.phys_dev, &fam_count, nil)
+    vk.GetPhysicalDeviceQueueFamilyProperties(device, &fam_count, nil)
 
     fam_props := make([]vk.QueueFamilyProperties, fam_count)
-    vk.GetPhysicalDeviceQueueFamilyProperties(ctx.phys_dev, &fam_count, &fam_props[0])
+    vk.GetPhysicalDeviceQueueFamilyProperties(device, &fam_count, &fam_props[0])
 
     if fam_count == 0 {
         log.error("Unable to find any queue families for given device")
     }
 
-    ctx.queues = make([]QueueFamily, fam_count)
+    families = make([]QueueFamily, fam_count)
 
     for fam, idx in fam_props {
-        ctx.queues[idx].family_idx = u32(idx)
-        ctx.queues[idx].queue_count = fam.queueCount
-        ctx.queues[idx].family_types = fam.queueFlags
+        families[idx].family_idx = u32(idx)
+        families[idx].queue_count = fam.queueCount
+        families[idx].family_types = _to_raven_queue_types(fam.queueFlags)
 
         log.info("Queue Family", idx, "has flags", fam.queueFlags)
-
-
-        res := vk.GetPhysicalDeviceSurfaceSupportKHR(ctx.phys_dev, u32(idx), ctx.window_surface, &ctx.queues[idx].surface_support)
-
-        ok = res == .SUCCESS
     }
 
     return

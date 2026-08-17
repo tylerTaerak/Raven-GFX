@@ -1,23 +1,38 @@
 package game_vulkan
 
-import sdl "vendor:sdl3"
+import "core:fmt"
 import vk "vendor:vulkan"
+import sdl "vendor:sdl3"
 
 import "core:log"
-import "core:mem"
 import "core:strings"
+import vmem "core:mem/virtual"
 
-create_vulkan_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
-     // get number of extensions for SDL to use
-    ext_count : u32
-    sdl_ext := sdl.Vulkan_GetInstanceExtensions(&ext_count)
+Instance :: struct {
+	core : vk.Instance,
+	debug : vk.DebugUtilsMessengerEXT
+}
+
+create_vulkan_instance :: proc(extensions : []string) -> (instance : Instance, ok: bool = true) {
+	vk.load_proc_addresses_global(rawptr(sdl.Vulkan_GetVkGetInstanceProcAddr()))
 
     vk_layers : []cstring
     vk_extensions : [dynamic]cstring
     defer delete(vk_extensions)
 
-    for i in 0..<ext_count {
-        append(&vk_extensions, sdl_ext[i])
+	cstring_arena : vmem.Arena
+
+	err := vmem.arena_init_growing(&cstring_arena)
+	defer vmem.arena_destroy(&cstring_arena)
+	if err != .None {
+		ok = false
+		return
+	}
+
+	cstring_alloc := vmem.arena_allocator(&cstring_arena)
+
+    for i in 0..<len(extensions) {
+        append(&vk_extensions, strings.clone_to_cstring(extensions[i], cstring_alloc))
     }
 
     append(&vk_extensions, vk.KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)
@@ -29,6 +44,8 @@ create_vulkan_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
     } else {
         vk_layers = {}
     }
+
+	fmt.println(vk.EnumerateInstanceLayerProperties)
 
     layer_count : u32
     vk.EnumerateInstanceLayerProperties(&layer_count, nil)
@@ -42,12 +59,12 @@ create_vulkan_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
         for &layer_props in layers {
             name_str := string(name)
             layer_name_str := strings.clone_from_bytes(layer_props.layerName[:])
+			defer delete(layer_name_str)
+
             if name_str == layer_name_str[:len(name_str)] {
                 found = true
                 break
             }
-
-            delete(layer_name_str)
         }
 
         if !found {
@@ -76,12 +93,25 @@ create_vulkan_instance :: proc(ctx : ^Context) -> (ok: bool = true) {
 
     log.info(create_info.enabledLayerCount)
 
-    res := vk.CreateInstance(&create_info, {}, &ctx.instance)
+    res := vk.CreateInstance(&create_info, {}, &instance.core)
 
     if res != .SUCCESS {
         log.error("Error creating vulkan instance with error:", res)
         ok = false
+		return
     }
 
+	log.debug("Initializing Procedures for Vulkan Instance")
+	vk.load_proc_addresses_instance(instance.core)
+
+	if ODIN_DEBUG {
+		instance.debug = create_debug_messenger(instance.core) or_return
+	}
+
     return
+}
+
+destroy_instance :: proc(instance : Instance) {
+	destroy_debug_messenger(instance.core, instance.debug)
+	vk.DestroyInstance(instance.core, nil)
 }

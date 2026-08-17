@@ -13,6 +13,12 @@ Descriptor_Type :: enum {
     IMAGE_SAMPLER
 }
 
+Queue_Type :: enum {
+	GRAPHICS,
+	COMPUTE,
+	TRANSFER
+}
+
 Image_Format :: enum {
     RGBA8_UNORM,        // 4 x 8-bit unsigned normmalized float
     RGBA8_SRGB,         // 4 x 8-bit sRGB

@@ -154,3 +154,29 @@ _to_vk_blend_op :: proc(op: core.Blend_Operation) -> vk.BlendOp {
 
     return .ADD
 }
+
+_to_vk_queue_type :: proc(type : core.Queue_Type) -> vk.QueueFlag {
+	switch (type) {
+		case .GRAPHICS:
+			return .GRAPHICS
+		case .COMPUTE:
+			return .COMPUTE
+		case .TRANSFER:
+			return .TRANSFER
+		case:
+			return .GRAPHICS
+	}
+}
+
+_to_raven_queue_type :: proc(type : vk.QueueFlag) -> QueueType {
+	#partial switch (type) {
+		case .GRAPHICS:
+			return .GRAPHICS
+		case .COMPUTE:
+			return .COMPUTE
+		case .TRANSFER:
+			return .TRANSFER
+		case:
+			return .GRAPHICS
+	}
+}
