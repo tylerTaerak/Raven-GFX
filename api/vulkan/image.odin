@@ -2,7 +2,7 @@
 package game_vulkan
 
 import vk "vendor:vulkan"
-import "../core"
+import "shared:raven-gfx/core"
 
 // use images for render targets, will probably be used for textures down the road
 

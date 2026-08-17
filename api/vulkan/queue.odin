@@ -1,7 +1,7 @@
 package game_vulkan
 
 import vk "vendor:vulkan"
-import "../core"
+import "shared:raven-gfx/core"
 
 import "core:log"
 

@@ -3,6 +3,9 @@ package gfx
 import core "core"
 import sdl "vendor:sdl3"
 import "core:log"
+import "./api"
+
+WINDOW_FLAGS : sdl.WindowFlags = {.VULKAN, .BORDERLESS}
 
 SHADERS_PATH :: #directory + "shaders/gen/default_3d/"
 
@@ -10,10 +13,10 @@ FRAMES_IN_FLIGHT :: 3
 
 // TODO)) I think I want to break this context down into smaller objects
 Context :: struct {
-	instance 		: API_Instance,
-	device 			: API_Device,
+	instance 		: api.Instance,
+	device 			: api.Device,
 
-    swapchain       : API_Swapchain(FRAMES_IN_FLIGHT),
+    swapchain       : api.Swapchain(FRAMES_IN_FLIGHT),
     window          : core.Window,
 
 	draw_ctx 		: Draw_Context(FRAMES_IN_FLIGHT),
@@ -43,9 +46,9 @@ initialize :: proc(cfg: Config) -> (ok : bool = true) {
 
 	log.info("SDL Window initialized")
 
-	Core_Context.instance = api_create_instance() or_return
+	Core_Context.instance = api.create_instance() or_return
 	log.info("Raven VK Instance created")
-	Core_Context.device = api_create_device(Core_Context.instance) or_return
+	Core_Context.device = api.create_device(Core_Context.instance) or_return
 	log.info("Raven VK Device created")
 
 	Core_Context.draw_ctx = create_draw_context(
@@ -64,10 +67,10 @@ update :: proc(frame : ^Draw_Frame) -> (keep_going : bool = true) {
 
 	// --- present the current frame
 	if frame.acquired {
-		api_prepare_image_present(dctx.command_set, int(frame.index_frame_ctx), frame.image)
-		api_end_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
+		api.prepare_image_present(dctx.command_set, int(frame.index_frame_ctx), frame.image)
+		api.end_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
 		
-		api_submit_command_buffer(
+		api.submit_command_buffer(
 			Core_Context.device,
 			dctx.command_set,
 			int(frame.index_frame_ctx),
@@ -85,17 +88,17 @@ update :: proc(frame : ^Draw_Frame) -> (keep_going : bool = true) {
         return false
     }
 
-    api_wait_for_fence(Core_Context.device, dctx.fence_in_flight[dctx.frame_index])
-    api_reset_fence(Core_Context.device, dctx.fence_in_flight[dctx.frame_index])
+    api.wait_for_fence(Core_Context.device, dctx.fence_in_flight[dctx.frame_index])
+    api.reset_fence(Core_Context.device, dctx.fence_in_flight[dctx.frame_index])
 
     frame^ = acquire_next_image(Core_Context.device, dctx)
 	dctx.frame_index = (dctx.frame_index + 1) % FRAMES_IN_FLIGHT
 
     if frame.acquired {
-		api_reset_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
-		api_begin_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
+		api.reset_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
+		api.begin_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
 
-		api_prepare_image_render(dctx.command_set, int(frame.index_frame_ctx), frame.image)
+		api.prepare_image_render(dctx.command_set, int(frame.index_frame_ctx), frame.image)
 	} else {
 		log.warn("Error acquiring next swapchain image")
 	}
@@ -104,12 +107,12 @@ update :: proc(frame : ^Draw_Frame) -> (keep_going : bool = true) {
 }
 
 shutdown :: proc() {
-    api_device_wait_idle(Core_Context.device)
+    api.device_wait_idle(Core_Context.device)
 
 	destroy_draw_context(Core_Context.device, Core_Context.draw_ctx)
 
-	api_destroy_device(Core_Context.device)
-	api_destroy_instance(Core_Context.instance)
+	api.destroy_device(Core_Context.device)
+	api.destroy_instance(Core_Context.instance)
 
     core.destroy_window(&Core_Context.window)
 

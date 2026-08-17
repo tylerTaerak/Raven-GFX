@@ -1,6 +1,6 @@
 package game_vulkan
 
-import "../core"
+import "shared:raven-gfx/core"
 import vk "vendor:vulkan"
 
 _to_vk_descriptor_type :: proc(type: core.Descriptor_Type) -> vk.DescriptorType {

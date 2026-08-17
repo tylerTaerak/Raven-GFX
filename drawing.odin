@@ -3,32 +3,32 @@ package gfx
 
 import "core:log"
 import "./core"
-import gvk "./vulkan"
+import "./api"
 
 Draw_Context :: struct($N: int) {
-	swapchain 			: API_Swapchain(N),
-	command_set 		: API_Command_Collection(N),
+	swapchain 			: api.Swapchain(N),
+	command_set 		: api.Command_Collection(N),
 
-	fence_in_flight 	: [N]API_Fence,
-	sem_image_acquired 	: [N]API_Binary_Semaphore,
-	sem_render_finished : [N]API_Binary_Semaphore,
+	fence_in_flight 	: [N]api.Fence,
+	sem_image_acquired 	: [N]api.Binary_Semaphore,
+	sem_render_finished : [N]api.Binary_Semaphore,
 
 	frame_index 		: u64 // monotonic counter for each frame
 }
 
 create_draw_context :: proc(
-	instance : API_Instance,
-	device : API_Device,
+	instance : api.Instance,
+	device : api.Device,
 	window : core.Window,
 	$Num_Frames : int) -> (ctx : Draw_Context(Num_Frames), ok : bool = true) {
 
-	ctx.swapchain = api_create_swapchain(instance, device, window) or_return
-	ctx.command_set = api_create_command_buffers(device, Num_Frames, {.GRAPHICS}) or_return
+	ctx.swapchain = api.create_swapchain(instance, device, window, Num_Frames) or_return
+	ctx.command_set = api.create_command_buffers(device, Num_Frames, {.GRAPHICS}) or_return
 
 	for i in 0..<Num_Frames {
-		ctx.fence_in_flight[i] = api_create_fence(device)
-		ctx.sem_image_acquired[i] = api_create_semaphore(device)
-		ctx.sem_render_finished[i] = api_create_semaphore(device)
+		ctx.fence_in_flight[i] = api.create_fence(device)
+		ctx.sem_image_acquired[i] = api.create_semaphore(device)
+		ctx.sem_render_finished[i] = api.create_semaphore(device)
 	}
 
 	ctx.frame_index = 0
@@ -36,32 +36,32 @@ create_draw_context :: proc(
 	return
 }
 
-destroy_draw_context :: proc(device : API_Device, ctx : $T/Draw_Context($N)) {
+destroy_draw_context :: proc(device : api.Device, ctx : $T/Draw_Context($N)) {
 	for i in 0..<N {
-		api_destroy_fence(device, ctx.fence_in_flight[i])
-		api_destroy_semaphore(device, ctx.sem_image_acquired[i])
-		api_destroy_semaphore(device, ctx.sem_render_finished[i])
+		api.destroy_fence(device, ctx.fence_in_flight[i])
+		api.destroy_semaphore(device, ctx.sem_image_acquired[i])
+		api.destroy_semaphore(device, ctx.sem_render_finished[i])
 	}
-	api_destroy_command_buffers(device, ctx.command_set)
-	api_destroy_swapchain(device, ctx.swapchain)
+	api.destroy_command_buffers(device, ctx.command_set)
+	api.destroy_swapchain(device, ctx.swapchain)
 }
 
 Draw_Frame :: struct {
-	image				: API_Image,
+	image				: api.Image,
 	index_swapchain_img : u32,
 	index_frame_ctx  	: u64,
 	acquired 			: bool,
-    sem_acquired		: ^API_Binary_Semaphore,
-    sem_draw_complete	: ^API_Binary_Semaphore
+    sem_acquired		: ^api.Binary_Semaphore,
+    sem_draw_complete	: ^api.Binary_Semaphore
 }
 
 
 // We also report that we succeed in acquiring a frame - the Draw_Frame struct has a boolean field
 // for if it was actually acquired that should be used to conditionally perform operations with it
-acquire_next_image :: proc(device : API_Device, ctx : ^$T/Draw_Context($N)) -> (frame : Draw_Frame) {
+acquire_next_image :: proc(device : api.Device, ctx : ^$T/Draw_Context($N)) -> (frame : Draw_Frame) {
 	frame.image,
 	frame.index_swapchain_img,
-	frame.acquired = api_acquire_next_swapchain_image_index(
+	frame.acquired = api.acquire_next_swapchain_image_index(
 					 device,
 					 &ctx.swapchain,
 					 0,
@@ -76,8 +76,8 @@ acquire_next_image :: proc(device : API_Device, ctx : ^$T/Draw_Context($N)) -> (
 	return
 }
 
-present_frame :: proc(device : API_Device, ctx : ^$T/Draw_Context($N), frame : Draw_Frame) {
-	res := api_present_image(device, &ctx.swapchain, int(frame.index_swapchain_img), frame.sem_draw_complete^)
+present_frame :: proc(device : api.Device, ctx : ^$T/Draw_Context($N), frame : Draw_Frame) {
+	res := api.present_image(device, &ctx.swapchain, int(frame.index_swapchain_img), frame.sem_draw_complete^)
 
 	if !res {
 		log.warn("Error presenting next frame")
@@ -86,7 +86,7 @@ present_frame :: proc(device : API_Device, ctx : ^$T/Draw_Context($N), frame : D
 
 // TODO)) Fill this out next
 transition_frame_layout :: proc(ctx : ^$T/Draw_Context($N), frame : Draw_Frame) {
-	// calls some sort of api_cmd_image_barrier using the current frame and the desired usages
+	// calls some sort of api.cmd_image_barrier using the current frame and the desired usages
 }
 
 // encompasses all dynamic draw configurations -- TODO)) need to fill out things that aren't as simple as a bool or a float
@@ -128,20 +128,20 @@ Draw_Text :: struct {
     // font (maybe) -- not sure if the font should be something set with the context or not
 }
 
-Graphics_Shader :: struct {
-    vertex : gvk.Shader_Chain,
-    fragment : gvk.Shader_Chain
-}
-
-Compute_Shader :: struct {
-    shader : gvk.Shader
-}
-
-Shader_Set :: union { Graphics_Shader, Compute_Shader }
+// Graphics_Shader :: struct {
+//     vertex : gvk.Shader_Chain,
+//     fragment : gvk.Shader_Chain
+// }
+// 
+// Compute_Shader :: struct {
+//     shader : gvk.Shader
+// }
+// 
+// Shader_Set :: union { Graphics_Shader, Compute_Shader }
 
 Draw_Key :: struct {
     model : Model_Handle,
-    render_target : API_Image,
+    render_target : api.Image,
     shader : Shader_Handle
 }
 

@@ -1,6 +1,6 @@
 #+build windows, linux, freebsd, openbsd, netbsd
 #+private
-package gfx
+package api
 
 import "base:runtime"
 import "core:strings"
@@ -8,7 +8,7 @@ import vmem "core:mem/virtual"
 import vulk "./vulkan"
 import vk "vendor:vulkan"
 import sdl "vendor:sdl3"
-import "./core"
+import "shared:raven-gfx/core"
 
 REQUIRED_DEVICE_EXTENSIONS : []string : {
     vk.KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -34,7 +34,7 @@ REQUIRED_DEVICE_EXTENSIONS : []string : {
 
 WINDOW_FLAGS : sdl.WindowFlags = {.VULKAN, .BORDERLESS}
 
-_create_instance 			:: proc() -> (API_Instance, bool) {
+_create_instance 			:: proc() -> (Instance, bool) {
 	ext_count : u32
 	sdl_ext := sdl.Vulkan_GetInstanceExtensions(&ext_count)
 
@@ -66,19 +66,19 @@ _create_instance 			:: proc() -> (API_Instance, bool) {
 }
 _destroy_instance 			:: vulk.destroy_instance
 
-_create_device 				:: proc(instance : API_Instance) -> (API_Device, bool) {
+_create_device 				:: proc(instance : Instance) -> (Device, bool) {
 	return vulk.create_device(instance, {.GRAPHICS, .COMPUTE, .TRANSFER}, REQUIRED_DEVICE_EXTENSIONS)
 }
 _destroy_device 			:: vulk.destroy_device
 
 _device_wait_idle 			:: vulk.wait_for_idle
 
-_create_swapchain           :: proc(instance : API_Instance, device : API_Device, window : core.Window) -> (sw : API_Swapchain(FRAMES_IN_FLIGHT), ok : bool) {
+_create_swapchain           :: proc(instance : Instance, device : Device, window : core.Window, $Frame_Count : int) -> (sw : Swapchain(Frame_Count), ok : bool) {
 	surface : vk.SurfaceKHR
 	// TODO)) I need to save this somewhere so I can clean it up later
 	sdl.Vulkan_CreateSurface(window.window_ptr, instance.core, nil, &surface) or_return
 
-	return vulk.create_swapchain(device, surface, u32(window.w), u32(window.h), FRAMES_IN_FLIGHT, nil)
+	return vulk.create_swapchain(device, surface, u32(window.w), u32(window.h), Frame_Count, nil)
 }
 
 _destroy_swapchain          :: vulk.destroy_swapchain
@@ -86,17 +86,17 @@ _destroy_swapchain          :: vulk.destroy_swapchain
 _create_image               :: vulk.create_image
 _destroy_image              :: vulk.destroy_image
 _image_barrier_render 		:: proc(
-	set : $T/API_Command_Collection($N),
+	set : $T/Command_Collection($N),
 	index : int,
-	image : API_Image) {
+	image : Image) {
 	vulk.image_barrier(set.buffers[index], image, .UNDEFINED, .COLOR_ATTACHMENT_OPTIMAL,
 		{}, {.COLOR_ATTACHMENT_WRITE}, {}, {.COLOR_ATTACHMENT_OUTPUT_KHR})
 }
 
 _image_barrier_present 		:: proc(
-	set : $T/API_Command_Collection($N),
+	set : $T/Command_Collection($N),
 	index : int,
-	image : API_Image) {
+	image : Image) {
 	vulk.image_barrier(set.buffers[index], image, .COLOR_ATTACHMENT_OPTIMAL, .PRESENT_SRC_KHR,
 		{.COLOR_ATTACHMENT_WRITE}, {}, {.COLOR_ATTACHMENT_OUTPUT_KHR}, {})
 }
@@ -117,29 +117,29 @@ _reset_fences               :: vulk.reset_fences
 _destroy_fence              :: vulk.destroy_fence
 
 _create_command_set         :: proc(
-	device : API_Device,
+	device : Device,
 	$Count : int,
-	types : vulk.QueueTypes) -> (cmd : API_Command_Collection(Count), ok : bool) {
+	types : vulk.QueueTypes) -> (cmd : Command_Collection(Count), ok : bool) {
 
 	fam := vulk.find_queue_family_by_type(device.queues, types) or_return
 	return vulk.create_command_set(device, Count, device.queues[fam])
 }
 _destroy_command_set        :: vulk.destroy_command_set
 
-_begin_command_buffer       :: proc(set : $T/API_Command_Collection($N), index : int) {
+_begin_command_buffer       :: proc(set : $T/Command_Collection($N), index : int) {
 	
 	vulk.begin_command_buffer(set.buffers[index])
 }
-_end_command_buffer         :: proc(set : $T/API_Command_Collection($N), index : int) {
+_end_command_buffer         :: proc(set : $T/Command_Collection($N), index : int) {
 
 	vulk.end_command_buffer(set.buffers[index])
 }
-_submit_command_buffer      :: proc(device : API_Device, set : $T/API_Command_Collection($N),
+_submit_command_buffer      :: proc(device : Device, set : $T/Command_Collection($N),
 	buffer_index : int, wait, signal : vulk.Semaphore, fence : vulk.Fence) {
 
 	vulk.submit_command_buffer(device, set.buffers[buffer_index], set.family, wait, signal, fence)
 }
-_reset_command_buffer 		:: proc(set : $T/API_Command_Collection($N), index : int) {
+_reset_command_buffer 		:: proc(set : $T/Command_Collection($N), index : int) {
 	vulk.reset_command_buffer(set.buffers[index])
 }
 

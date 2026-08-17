@@ -1,10 +1,5 @@
 package gfx
 
-import "core:log"
-import gvk "./vulkan"
-import "./core"
-import "core:mem"
-
 // import "../gpu_mem" // TODO))  I guess I need to continue doing it this way until I figue out how the heck imports ought to work in Odin
  
 MAX_VERTICES :: 512_000
@@ -41,7 +36,7 @@ Font_Asset :: struct {
 Font_Handle :: distinct u64
 
 Shader_Asset :: struct {
-    shader : gvk.Shader_Chain
+    // shader : gvk.Shader_Chain
 }
 
 Shader_Handle :: distinct u64

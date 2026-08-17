@@ -2,7 +2,7 @@ package game_vulkan
 
 import "core:os"
 import "core:log"
-import "../core"
+import "shared:raven-gfx/core"
 import vk "vendor:vulkan"
 import "core:strings"
 import gmem "shared:gpu-memory"
