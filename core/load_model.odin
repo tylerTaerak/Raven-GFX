@@ -4,7 +4,6 @@ import "core:strings"
 import "core:mem"
 import "core:os"
 import "core:log"
-import "core:math/linalg"
 import "vendor:cgltf"
 
 Model_Data :: struct {

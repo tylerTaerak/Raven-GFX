@@ -8,6 +8,7 @@ import vmem "core:mem/virtual"
 import vulk "./vulkan"
 import vk "vendor:vulkan"
 import sdl "vendor:sdl3"
+import gmem "shared:gpu-memory"
 import "shared:raven-gfx/core"
 
 REQUIRED_DEVICE_EXTENSIONS : []string : {
@@ -69,13 +70,32 @@ _destroy_instance 			:: vulk.destroy_instance
 _create_device 				:: proc(instance : Instance) -> (Device, bool) {
 	return vulk.create_device(instance, {.GRAPHICS, .COMPUTE, .TRANSFER}, REQUIRED_DEVICE_EXTENSIONS)
 }
+
+// TODO)) There should be a way to only pass in certain queues in per usage reqs
+_allocate_gmem_device 			:: proc(device : Device) -> (gpu_dev : gmem.Device) {
+	gpu_dev.logical = device.core
+	gpu_dev.physical = device.physical
+
+
+	gpu_dev.queue_family_indicies = make([]u32, len(device.queues))
+	for i in 0..<len(device.queues) {
+		gpu_dev.queue_family_indicies[i] = device.queues[i].family_idx
+	}
+
+	return
+}
+
+_free_gmem_device 			:: proc(gpu_dev : gmem.Device) {
+	delete(gpu_dev.queue_family_indicies)
+}
+
 _destroy_device 			:: vulk.destroy_device
 
 _device_wait_idle 			:: vulk.wait_for_idle
 
 _create_swapchain           :: proc(instance : Instance, device : Device, window : core.Window, $Frame_Count : int) -> (sw : Swapchain(Frame_Count), ok : bool) {
 	surface : vk.SurfaceKHR
-	// TODO)) I need to save this somewhere so I can clean it up later
+
 	sdl.Vulkan_CreateSurface(window.window_ptr, instance.core, nil, &surface) or_return
 
 	return vulk.create_swapchain(device, surface, u32(window.w), u32(window.h), Frame_Count, nil)

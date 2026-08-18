@@ -1,5 +1,6 @@
 package api
 import "shared:raven-gfx/core"
+import gmem "shared:gpu-memory"
 
 // This file contains all of the functions needed by Raven for calling out to Graphics APIs
 // Actual implementations are found in API-specific files and libraries
@@ -14,6 +15,14 @@ destroy_instance :: proc(instance : Instance) {
 
 create_device :: proc(instance : Instance) -> (Device, bool) {
 	return _create_device(instance)
+}
+
+allocate_gmem_device :: proc(device : Device) -> (gpu_dev : gmem.Device) {
+	return _allocate_gmem_device(device)
+}
+
+free_gmem_device :: proc(gpu_dev : gmem.Device) {
+	_free_gmem_device(gpu_dev)
 }
 
 destroy_device :: proc(device : Device) {
