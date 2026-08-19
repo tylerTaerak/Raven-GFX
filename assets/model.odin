@@ -22,6 +22,8 @@ load_model_assets :: proc(
 	store : ^Asset_Store(Model),
 	data : []byte,
 	filepath : Maybe(string) = nil) -> (handles : []Model, ok : bool = true) {
+	assert(filepath != nil) // TODO)) I think the filepath is still required, which may mean
+							// that I need to rethink the organization of this loading logic
 
 	options : cgltf.options
 	gltf, res := cgltf.parse(options, raw_data(data), len(data))

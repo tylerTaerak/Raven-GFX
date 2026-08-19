@@ -1,5 +1,6 @@
 package assets
 
+import "core:log"
 import "core:os"
 import "shared:raven-gfx/api"
 import gmem "shared:gpu-memory"
@@ -110,8 +111,10 @@ load_multiple_assets_from_bytes :: proc(
 	api.wait_for_fence(device, store.loading_fence)
 	api.reset_fence(device, store.loading_fence)
 
+	api.begin_command_buffer(store.cmd_set, 0)
+
 	assets : []E
-	assets, ok = dispatch_load_assets(device, store, data)
+	assets, ok = dispatch_load_assets(device, store, data, filepath)
 
 	handles = make([]Asset_Handle(E), len(assets))
 
@@ -119,6 +122,8 @@ load_multiple_assets_from_bytes :: proc(
 		handles[i].handle = len(store.assets)
 		append(&store.assets, a)
 	}
+
+	api.end_command_buffer(store.cmd_set, 0)
 
 	api.submit_command_buffer(device, store.cmd_set, 0, 0, 0, store.loading_fence)
 
