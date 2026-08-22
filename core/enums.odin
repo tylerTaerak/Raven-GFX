@@ -95,3 +95,9 @@ Shader_Stage :: enum {
     COMPUTE,
     MESH
 }
+
+Memory_Type :: enum {
+	DEVICE,
+	HOST,
+	DESCRIPTORS
+}

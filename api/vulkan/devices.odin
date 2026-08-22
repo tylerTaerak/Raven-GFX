@@ -7,10 +7,12 @@ import "core:strings"
 import vmem "core:mem/virtual"
 
 Device :: struct {
-	core : vk.Device,
-	physical : vk.PhysicalDevice,
-	queues : []QueueFamily,
-	instance : Instance
+	core 			: vk.Device,
+	physical 		: vk.PhysicalDevice,
+	queues 			: []QueueFamily,
+	instance 		: Instance,
+	device_memory 	: Device_Allocation(.DEVICE),
+	staging_memory 	: Device_Allocation(.HOST)
 }
 
 create_device :: proc(instance : Instance, types : QueueTypes, dev_extensions : []string) -> (device : Device, ok : bool = true) {

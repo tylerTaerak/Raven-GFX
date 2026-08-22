@@ -170,3 +170,61 @@ _create_semaphore           :: vulk.init_semaphore
 _destroy_semaphore          :: vulk.destroy_semaphore
 
 _wait_for_idle              :: vulk.wait_for_idle
+
+_allocate_memory 			:: proc(device : Device, type : core.Memory_Type, size : u32) -> (Memory, bool) {
+	mem_flags : vk.MemoryPropertyFlags
+	if type == .DEVICE {
+		mem_flags = {.DEVICE_LOCAL}
+	} else {
+		mem_flags = {.HOST_VISIBLE, .HOST_COHERENT}
+	}
+
+
+	main_props : vk.PhysicalDeviceMaintenance3Properties
+	main_props.sType = .PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES
+
+	phys_props : vk.PhysicalDeviceProperties2
+	phys_props.sType = .PHYSICAL_DEVICE_PROPERTIES_2
+	phys_props.pNext = &main_props
+
+	vk.GetPhysicalDeviceProperties2(device.physical, &phys_props)
+
+	mem_props : vk.PhysicalDeviceMemoryProperties2
+	mem_props.sType = .PHYSICAL_DEVICE_MEMORY_PROPERTIES_2
+
+	vk.GetPhysicalDeviceMemoryProperties2(device.physical, &mem_props)
+
+	size := size
+
+	// allocate as much as possible if no size was given
+	if size == 0 {
+		size = u32(main_props.maxMemoryAllocationSize)
+	}
+
+	index : u32
+	for i in 0..<mem_props.memoryProperties.memoryTypeCount {
+		mem_type := mem_props.memoryProperties.memoryTypes[i]
+		if (mem_type.propertyFlags & mem_flags) == mem_flags {
+			index = i
+			break
+		}
+	}
+
+	return vulk.allocate_memory(device, index, size)
+}
+
+_map_memory 				:: proc(device : Device, memory : Memory, size : u32) -> (ptr : rawptr, ok : bool) {
+	info : vk.MemoryMapInfo
+	info.sType = .MEMORY_MAP_INFO
+	info.memory = memory
+	info.size = vk.DeviceSize(size)
+	info.offset = 0
+	info.flags = {}
+
+	res := vk.MapMemory2(device.core, &info, &ptr)
+
+	ok = res == .SUCCESS
+
+	return
+}
+_free_memory 				:: vulk.free_memory

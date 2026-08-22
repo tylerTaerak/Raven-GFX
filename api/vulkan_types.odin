@@ -6,6 +6,8 @@ import vulk "./vulkan"
 Instance 			:: vulk.Instance
 Device 	 			:: vulk.Device
 Swapchain 			:: vulk.Swapchain
+Memory 				:: vulk.Memory
+Buffer 				:: vulk.Buffer
 Image 	  			:: vulk.Render_Image
 Timeline_Semaphore 	:: vulk.Timeline
 Binary_Semaphore   	:: vulk.Semaphore

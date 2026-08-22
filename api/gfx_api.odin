@@ -17,6 +17,18 @@ create_device :: proc(instance : Instance) -> (Device, bool) {
 	return _create_device(instance)
 }
 
+allocate_memory :: proc(device : Device, type : core.Memory_Type, size : u32) -> (Memory, bool) {
+	return _allocate_memory(device, type, size)
+}
+
+map_memory :: proc(device : Device, memory : Memory, size : u32) -> (rawptr, bool) {
+	return _map_memory(device, memory, size)
+}
+
+free_memory :: proc(device : Device, memory : Memory) {
+	_free_memory(device, memory)
+}
+
 allocate_gmem_device :: proc(device : Device) -> (gpu_dev : gmem.Device) {
 	return _allocate_gmem_device(device)
 }
@@ -124,10 +136,12 @@ destroy_shader :: proc() {
 bind_shader :: proc() {
 }
 
-create_image :: proc() {
+create_image :: proc(device : Device, size : [2]u32, format : core.Image_Format, usage : core.Image_Usage) -> (Image, bool) {
+	return _create_image(device, size, format, usage)
 }
 
-destroy_image :: proc() {
+destroy_image :: proc(device : Device, img : Image) {
+	_destroy_image(device, img)
 }
 
 // TODO)) I think we can do something a little more extensive than just this, but this
@@ -140,6 +154,13 @@ prepare_image_render :: proc(cmd : $T/Command_Collection($N), index : int, image
 
 prepare_image_present :: proc(cmd : $T/Command_Collection($N), index : int, image : Image) {
 	_image_barrier_present(cmd, index, image)
+}
+
+cmd_transition_image_usage :: proc(
+	cmd : $T/Command_Collection($N),
+	index : int,
+	image : Image,
+	old, new : core.Image_Usage) {
 }
 
 bind_image :: proc() {

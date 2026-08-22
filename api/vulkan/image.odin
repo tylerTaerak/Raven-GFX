@@ -9,6 +9,7 @@ import "shared:raven-gfx/core"
 Render_Image :: struct {
     image: vk.Image,
     view : vk.ImageView,
+	memory : vk.DeviceMemory,
     size : [2]u32
 }
 
@@ -68,6 +69,53 @@ create_image :: proc(device : Device, size: [2]u32, format: core.Image_Format, u
     img.size = size
 
     ok = res == .SUCCESS
+
+	if !ok {
+		return
+	}
+
+	mem_req : vk.MemoryRequirements2
+	mem_req.sType = .MEMORY_REQUIREMENTS_2
+
+	mem_props : vk.PhysicalDeviceMemoryProperties2
+	mem_props.sType = .PHYSICAL_DEVICE_MEMORY_PROPERTIES_2
+
+	req_info : vk.ImageMemoryRequirementsInfo2
+	req_info.sType = .IMAGE_MEMORY_REQUIREMENTS_INFO_2
+	req_info.image = img.image
+
+	vk.GetImageMemoryRequirements2(device.core, &req_info, &mem_req)
+	vk.GetPhysicalDeviceMemoryProperties2(device.physical, &mem_props)
+
+	mem_flags : vk.MemoryPropertyFlags = {.DEVICE_LOCAL}
+
+	mem_idx : u32
+	for i in 0..<mem_props.memoryProperties.memoryTypeCount {
+		mem_type := mem_props.memoryProperties.memoryTypes[i]
+		if (mem_type.propertyFlags & mem_flags) == mem_flags {
+			mem_idx = i
+			break
+		}
+	}
+
+	mem_alloc_info : vk.MemoryAllocateInfo
+	mem_alloc_info.sType = .MEMORY_ALLOCATE_INFO
+	mem_alloc_info.allocationSize = mem_req.memoryRequirements.size
+	mem_alloc_info.memoryTypeIndex = mem_idx
+
+	res = vk.AllocateMemory(device.core, &mem_alloc_info, {}, &img.memory)
+
+	if res != .SUCCESS {
+		ok = false
+		return
+	}
+
+	res = vk.BindImageMemory(device.core, img.image, img.memory, 0)
+
+	if res != .SUCCESS {
+		ok = false
+		return
+	}
 
     return
 }
