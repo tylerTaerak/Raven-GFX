@@ -6,25 +6,21 @@ import "vendor:cgltf"
 import "shared:raven-gfx/api"
 import "core:mem"
 import "core:log"
-import gmem "shared:gpu-memory"
 
 Model_Primitive :: struct {
-	indices : gmem.Bytes(.DEVICE),
-	vertex_data : map[string]gmem.Bytes(.DEVICE)
+	indices : api.Buffer(.DEVICE),
+	vertex_data : map[string]api.Buffer(.DEVICE)
 }
 
 Model :: struct {
 	primitives : []Model_Primitive
 }
 
-load_model_assets :: proc(
+load_model_data :: proc(
 	device : api.Device,
-	store : ^Asset_Store(Model),
+	store : ^Asset_Store,
 	data : []byte,
-	filepath : Maybe(string) = nil) -> (handles : []Model, ok : bool = true) {
-	assert(filepath != nil) // TODO)) I think the filepath is still required, which may mean
-							// that I need to rethink the organization of this loading logic
-
+	filepath : string) -> (handles : []Model, ok : bool = true) {
 	options : cgltf.options
 	gltf, res := cgltf.parse(options, raw_data(data), len(data))
 
@@ -42,18 +38,14 @@ load_model_assets :: proc(
 		return
 	}
 
-	switch v in filepath {
-		case string:
-			v_cstr := strings.clone_to_cstring(v)
-			defer delete(v_cstr)
+	v_cstr := strings.clone_to_cstring(filepath)
+	defer delete(v_cstr)
 
-			res = cgltf.load_buffers({}, gltf, v_cstr)
+	res = cgltf.load_buffers({}, gltf, v_cstr)
 
-			if res != .success {
-				ok = false
-				return
-			}
-		case nil:
+	if res != .success {
+		ok = false
+		return
 	}
 
 	models : [dynamic]Model
@@ -72,23 +64,13 @@ load_model_assets :: proc(
 				buffer := _make_bytes_from_accessor(indices_accessor)
 				defer delete(buffer)
 
-				slice, err := gmem.galloc(&store.staging, len(buffer))
+				slice := make_host_buffer(device, store, len(buffer)) or_return
 
-				if err != nil {
-					ok = false
-					return
-				}
+				mem.copy(api.host_pointer(slice), rawptr(&buffer[0]), len(buffer))
 
-				mem.copy(gmem.host_pointer(slice), rawptr(&buffer[0]), len(buffer))
+				new_prim.indices = api.create_device_buffer(device, len(buffer)) or_return
 
-				new_prim.indices, err = gmem.galloc(&store.arena, len(buffer))
-
-				if err != nil {
-					ok = false
-					return
-				}
-
-				gmem.gcopy(store.cmd_set.buffers[0], &new_prim.indices, &slice)
+				api.copy_buffer(store.cmd_set, 0, new_prim.indices, slice)
 			}
 
 			for &attr, i in primitive.attributes {
@@ -97,30 +79,15 @@ load_model_assets :: proc(
 				bytes := _make_bytes_from_accessor(accessor)
 				defer delete(bytes)
 
-				slice, err := gmem.galloc(&store.staging, len(bytes))
+				slice := make_host_buffer(device, store, len(bytes)) or_return
 
-				if err != nil {
-					ok = false
-					return
-				}
+				mem.copy(api.host_pointer(slice), rawptr(&bytes[0]), len(bytes))
 
-				host_ptr := gmem.host_pointer(slice)
-				mem.copy(host_ptr, rawptr(&bytes[0]), len(bytes))
+				vdata := api.create_device_buffer(device, len(bytes)) or_return
 
-				// TODO)) This feels just a little funky
-				new_prim.vertex_data[core.GLTF_Strings[attr.type]], err = gmem.galloc(&store.arena, len(bytes))			
-				if err != nil {
-					ok = false
-					return
-				}
+				api.copy_buffer(store.cmd_set, 0, vdata, slice)
 
-				// TODO)) this is way too close to Vulkan for my tastes currently
-				gmem.gcopy(store.cmd_set.buffers[0], &new_prim.vertex_data[core.GLTF_Strings[attr.type]], &slice)
-
-				if err != nil {
-					ok = false
-					return
-				}
+				new_prim.vertex_data[core.GLTF_Strings[attr.type]] = vdata
 			}
 
 			model.primitives[idx] = new_prim
@@ -170,3 +137,16 @@ _make_bytes_from_accessor :: proc(acc : ^cgltf.accessor) -> (data : []byte) {
     return
 }
 
+destroy_model :: proc(device : api.Device, store : ^Asset_Store, model : Model_Handle) {
+	model_data := store.models[int(model)]
+
+	for &p in model_data.primitives {
+		api.destroy_buffer(device, p.indices)
+
+		for k, v in p.vertex_data {
+			api.destroy_buffer(device, v)
+		}
+
+		delete_map(p.vertex_data)
+	}
+}

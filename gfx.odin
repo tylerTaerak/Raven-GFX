@@ -1,120 +1,363 @@
+#+feature dynamic-literals
 package gfx
 
-import core "core"
-import sdl "vendor:sdl3"
 import "core:log"
+import "./core"
 import "./api"
 
-WINDOW_FLAGS : sdl.WindowFlags = {.VULKAN, .BORDERLESS}
+Graphics_Context :: struct($N: int) {
+	window 				: core.Window,
+	swapchain 			: api.Swapchain(N),
+	command_set 		: api.Command_Collection(N),
 
-SHADERS_PATH :: #directory + "shaders/gen/default_3d/"
+	fence_in_flight 	: [N]api.Fence,
+	sem_image_acquired 	: [N]api.Binary_Semaphore,
+	sem_render_finished : [N]api.Binary_Semaphore,
 
-FRAMES_IN_FLIGHT :: 3
-
-// TODO)) I think I want to break this context down into smaller objects
-Context :: struct {
-	instance 		: api.Instance,
-	device 			: api.Device,
-
-    swapchain       : api.Swapchain(FRAMES_IN_FLIGHT),
-    window          : core.Window,
-
-	draw_ctx 		: Draw_Context(FRAMES_IN_FLIGHT),
+	frame_index 		: u64 // monotonic counter for each frame
 }
 
-Core_Context : Context
-
-Config :: struct {
-    window_title: string,
-    window_w, window_h: int
+Window_Config :: struct {
+	title : string,
+	w, h : int,
+	flags : core.WindowCreateFlags
 }
 
-initialize :: proc(cfg: Config) -> (ok : bool = true) {
-	// TODO)) I'm not sure if I want to rely solely on SDL as a dependency - things get really tricky if I want to do WASM (which I do)
-	// SDL only supports WASM through Emscripten, which is something I'd really like to avoid. Otherwise, it suits my needs well, but
-	// I wonder if I should be creating my own windowing library to link into here
-    sdl.Init({.EVENTS, .GAMEPAD, .VIDEO, .JOYSTICK}) or_return
-	log.info("SDL Initialized")
+create_graphics_context :: proc(
+	instance : api.Instance,
+	device : api.Device,
+	window_cfg : Window_Config,
+	$Num_Frames : int) -> (ctx : Graphics_Context(Num_Frames), ok : bool = true) {
 
-    // TODO)) should probably expose a subset of window flags for a user
-    Core_Context.window = core.create_window(
-        cfg.window_title,
-        cfg.window_w,
-        cfg.window_h,
-        WINDOW_FLAGS
-    )
+	ctx.window = core.create_window(
+		window_cfg.title,
+		window_cfg.w,
+		window_cfg.h,
+		window_cfg.flags)
 
-	log.info("SDL Window initialized")
+	ctx.swapchain = api.create_swapchain(instance, device, ctx.window, Num_Frames) or_return
+	ctx.command_set = api.create_command_buffers(device, Num_Frames, {.GRAPHICS}) or_return
 
-	Core_Context.instance = api.create_instance() or_return
-	log.info("Raven VK Instance created")
-	Core_Context.device = api.create_device(Core_Context.instance) or_return
-	log.info("Raven VK Device created")
-
-	Core_Context.draw_ctx = create_draw_context(
-		Core_Context.instance,
-		Core_Context.device,
-		Core_Context.window,
-		FRAMES_IN_FLIGHT) or_return
-
-	log.info("Raven Draw Context Created")
-
-    return
-}
-
-update :: proc(frame : ^Draw_Frame) -> (keep_going : bool = true) {
-	dctx := &Core_Context.draw_ctx
-
-	// --- present the current frame
-	if frame.acquired {
-		api.prepare_image_present(dctx.command_set, int(frame.index_frame_ctx), frame.image)
-		api.end_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
-		
-		api.submit_command_buffer(
-			Core_Context.device,
-			dctx.command_set,
-			int(frame.index_frame_ctx),
-			frame.sem_acquired^,
-			frame.sem_draw_complete^,
-			dctx.fence_in_flight[frame.index_frame_ctx])
-
-		present_frame(Core_Context.device, dctx, frame^)
+	for i in 0..<Num_Frames {
+		ctx.fence_in_flight[i] = api.create_fence(device)
+		ctx.sem_image_acquired[i] = api.create_semaphore(device)
+		ctx.sem_render_finished[i] = api.create_semaphore(device)
 	}
 
-	// --- start the next frame
+	ctx.frame_index = 0
 
-    core.refresh_frame_events(&Core_Context.window)
-    if core.check_quit_event(Core_Context.window) {
-        return false
-    }
+	return
+}
 
-    api.wait_for_fence(Core_Context.device, dctx.fence_in_flight[dctx.frame_index])
-    api.reset_fence(Core_Context.device, dctx.fence_in_flight[dctx.frame_index])
-
-    frame^ = acquire_next_image(Core_Context.device, dctx)
-	dctx.frame_index = (dctx.frame_index + 1) % FRAMES_IN_FLIGHT
-
-    if frame.acquired {
-		api.reset_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
-		api.begin_command_buffer(dctx.command_set, int(frame.index_frame_ctx))
-
-		api.prepare_image_render(dctx.command_set, int(frame.index_frame_ctx), frame.image)
-	} else {
-		log.warn("Error acquiring next swapchain image")
+destroy_graphics_context :: proc(device : api.Device, ctx : $T/Graphics_Context($N)) {
+	for i in 0..<N {
+		api.destroy_fence(device, ctx.fence_in_flight[i])
+		api.destroy_semaphore(device, ctx.sem_image_acquired[i])
+		api.destroy_semaphore(device, ctx.sem_render_finished[i])
 	}
-
-    return
+	api.destroy_command_buffers(device, ctx.command_set)
+	api.destroy_swapchain(device, ctx.swapchain)
 }
 
-shutdown :: proc() {
-    api.device_wait_idle(Core_Context.device)
-
-	destroy_draw_context(Core_Context.device, Core_Context.draw_ctx)
-
-	api.destroy_device(Core_Context.device)
-	api.destroy_instance(Core_Context.instance)
-
-    core.destroy_window(&Core_Context.window)
-
-	sdl.Quit()
+Draw_Frame :: struct {
+	image				: api.Image,
+	index_swapchain_img : u32,
+	index_frame_ctx  	: u64,
+	acquired 			: bool,
+    sem_acquired		: ^api.Binary_Semaphore,
+    sem_draw_complete	: ^api.Binary_Semaphore
 }
+
+
+// We also report that we succeed in acquiring a frame - the Draw_Frame struct has a boolean field
+// for if it was actually acquired that should be used to conditionally perform operations with it
+acquire_next_image :: proc(device : api.Device, ctx : ^$T/Graphics_Context($N)) -> (frame : Draw_Frame) {
+	frame.image,
+	frame.index_swapchain_img,
+	frame.acquired = api.acquire_next_swapchain_image_index(
+					 device,
+					 &ctx.swapchain,
+					 0,
+					 ctx.sem_image_acquired[ctx.frame_index])
+
+
+	frame.sem_acquired = &ctx.sem_image_acquired[ctx.frame_index]
+	frame.sem_draw_complete = &ctx.sem_render_finished[frame.index_swapchain_img]
+
+	frame.index_frame_ctx = ctx.frame_index
+
+	return
+}
+
+present_frame :: proc(device : api.Device, ctx : ^$T/Graphics_Context($N), frame : Draw_Frame) {
+	res := api.present_image(device, &ctx.swapchain, int(frame.index_swapchain_img), frame.sem_draw_complete^)
+
+	if !res {
+		log.warn("Error presenting next frame")
+	}
+}
+
+// TODO)) Fill this out next
+transition_frame_layout :: proc(ctx : ^$T/Graphics_Context($N), frame : Draw_Frame) {
+	// calls some sort of api.cmd_image_barrier using the current frame and the desired usages
+}
+
+// encompasses all dynamic draw configurations -- TODO)) need to fill out things that aren't as simple as a bool or a float
+Drawing_Configuration :: struct {
+    rasterizer_discard : b32,
+    cull_mode : []i32,
+    front_face : []i32,
+    depth_test : b32,
+    depth_write : b32,
+    depth_bias : b32,
+    stencil_test : b32,
+    line_width : f32,
+    polygon_mode : []i32,
+    viewport : []i32,
+    scissor : []i32,
+    color_mask : []i32,
+    color_blend : b32,
+    color_blend_eq : []i32
+}
+
+Screen_Coordinates  :: [2]f32
+World_Transform     :: matrix[4, 4]f32
+
+Draw_Model :: struct {
+    pose : matrix[4, 4]f32,
+    model : Model_Handle
+}
+
+Draw_Sprite :: struct {
+    transform   : union{Screen_Coordinates, World_Transform},
+    width       : int,
+    height      : int
+    // texture handle
+}
+
+Draw_Text :: struct {
+    transform   : union{Screen_Coordinates, World_Transform},
+    text        : string
+    // font (maybe) -- not sure if the font should be something set with the context or not
+}
+
+// Graphics_Shader :: struct {
+//     vertex : gvk.Shader_Chain,
+//     fragment : gvk.Shader_Chain
+// }
+// 
+// Compute_Shader :: struct {
+//     shader : gvk.Shader
+// }
+// 
+// Shader_Set :: union { Graphics_Shader, Compute_Shader }
+
+Draw_Key :: struct {
+    model : Model_Handle,
+    render_target : api.Image,
+    shader : Shader_Handle
+}
+
+Draw_Map :: map[Draw_Key][dynamic]World_Transform
+
+// TODO)) Ideally, I think the way to manage this is to have everything held by the central context,
+// and just divvy out handles to all of these assets - then we can take something something take the hash
+// between the image and shader steps and that gives us a really good set of actually divisible jobs to run
+// draw_model_with_target_and_shader :: proc(model: Draw_Model, target: ^gvk.Render_Image, shader_steps : []Shader_Handle) {
+//     for shader in shader_steps {
+//         key : Draw_Key
+//         key.model = model.model
+//         key.render_target = target^
+//         key.shader = shader
+// 
+//         // insert the model data into the draws
+//         if list, ok := &Core_Context.draws[key]; ok {
+//             append(list, model.pose)
+//         } else {
+//             Core_Context.draws[key] = { model.pose } // start the dynamic array off
+//         }
+//     }
+// }
+
+// draw_model_with_shader :: proc(model: Draw_Model, shader_steps : []Shader_Handle) {
+// }
+// 
+// draw_model_with_target :: proc(model: Draw_Model, target : ^gvk.Render_Image) {
+// }
+// 
+// draw_model_defaults :: proc(model: Draw_Model) {
+//     // draw_model_with_target_and_shader(model, DEFAULT_RENDER_TARGET, DEFAULT_MODEL_SHADER)
+// }
+// 
+// draw_model :: proc{
+//     draw_model_with_target_and_shader,
+//     draw_model_with_shader,
+//     draw_model_with_target,
+//     draw_model_defaults,
+// }
+// 
+// draw_sprite :: proc(sprite: Draw_Sprite, target: ^gvk.Render_Image, shader_steps : []Shader_Set) {
+// }
+// 
+// draw_text :: proc(text: Draw_Text, target: ^gvk.Render_Image, shader_steps : []Shader_Set) {
+// }
+
+/*
+   TODO)) This function still has raw vulkan dependencies
+   */
+//write_draw_command_buffer :: proc(draw_commands : Draw_Map, dst_buffer : ^gvk.Host_Buffer(vk.DrawIndexedIndirectCommand)) -> u32{
+//    commands : [dynamic]vk.DrawIndexedIndirectCommand
+//    defer delete(commands)
+//
+//    instances : [dynamic]World_Transform
+//
+//    instance_offset : u32
+//    draw_count : u32
+//
+//    for key, tforms in draw_commands {
+//        for model_chunk in Core_Context.assets.models[key.model].chunks {
+//            vk_draw_cmd : vk.DrawIndexedIndirectCommand
+//            vk_draw_cmd.indexCount = model_chunk.index_count
+//            vk_draw_cmd.firstIndex = u32(model_chunk.index_offset) / size_of(u16)
+//            vk_draw_cmd.instanceCount = u32(len(tforms))
+//            vk_draw_cmd.vertexOffset = i32(model_chunk.vertex_offset)
+//            vk_draw_cmd.firstInstance = instance_offset
+//
+//            instance_offset += u32(len(tforms))
+//
+//            append(&commands, vk_draw_cmd)
+//
+//            draw_count += 1
+//        }
+//
+//        append(&instances, ..tforms[:])
+//    }
+//
+//    mem.copy(dst_buffer.data_ptr, raw_data(commands), len(commands) * size_of(vk.DrawIndexedIndirectCommand))
+//    mem.copy(Core_Context.instances[Core_Context.frame_index].data_ptr, raw_data(instances), len(instances) * size_of(World_Transform))
+//
+//    return draw_count
+//}
+
+/**
+  TODO)) This function still has raw vulkan dependencies
+  */
+// commit_draw_commands :: proc(cmd_buf : vk.CommandBuffer, draw_commands : gvk.Host_Buffer(vk.DrawIndexedIndirectCommand), command_count: u32, draw_map : Draw_Map) {
+//     offset : vk.DeviceSize = 0
+//     for key, _ in draw_map {
+//         draw_count := u32(len(Core_Context.assets.models[key.model].chunks))
+// 
+//         image := key.render_target
+// 
+//         info : vk.RenderingInfoKHR
+//         info.sType = .RENDERING_INFO_KHR
+//         info.layerCount = 1
+//         info.colorAttachmentCount = 1
+//         info.renderArea = {{0, 0}, {image.size.x, image.size.y}}
+// 
+//         attachment : vk.RenderingAttachmentInfoKHR
+//         attachment.sType = .RENDERING_ATTACHMENT_INFO_KHR
+//         attachment.imageView = image.view
+//         attachment.imageLayout = .COLOR_ATTACHMENT_OPTIMAL
+//         attachment.loadOp = .CLEAR
+//         attachment.storeOp = .STORE
+//         attachment.clearValue = {color={uint32={60, 60, 205, 255}}}
+// 
+//         attachments : []vk.RenderingAttachmentInfoKHR = {attachment}
+// 
+//         info.pColorAttachments = &attachments[0]
+// 
+//         vk.CmdBeginRenderingKHR(cmd_buf, &info)
+// 
+//         vk.CmdSetRasterizerDiscardEnableEXT(cmd_buf, false)
+//         vk.CmdSetCullModeEXT(cmd_buf, {.BACK})
+//         vk.CmdSetFrontFaceEXT(cmd_buf, .CLOCKWISE)
+//         vk.CmdSetDepthTestEnableEXT(cmd_buf, false)
+//         vk.CmdSetDepthWriteEnableEXT(cmd_buf, false)
+//         vk.CmdSetDepthBiasEnableEXT(cmd_buf, false)
+//         vk.CmdSetStencilTestEnableEXT(cmd_buf, false)
+//         vk.CmdSetLineWidth(cmd_buf, 1.0)
+//         vk.CmdSetPolygonModeEXT(cmd_buf, .FILL)
+//         vk.CmdSetDepthClipEnableEXT(cmd_buf, false)
+//         vk.CmdSetAlphaToCoverageEnableEXT(cmd_buf, false)
+//         vk.CmdSetPrimitiveTopologyEXT(cmd_buf, .TRIANGLE_LIST)
+//         vk.CmdSetPrimitiveRestartEnableEXT(cmd_buf, false)
+//         vk.CmdSetVertexInputEXT(cmd_buf, 0, nil, 0, nil)
+// 
+//         viewport : vk.Viewport
+//         viewport.x = 0
+//         viewport.y = 0
+//         viewport.width = f32(image.size.x)
+//         viewport.height = f32(image.size.y)
+//         vk.CmdSetViewport(cmd_buf, 0, 1, &viewport)
+//         vk.CmdSetViewportWithCountEXT(cmd_buf, 1, &viewport)
+// 
+//         scissor : vk.Rect2D
+//         scissor.offset = {0, 0}
+//         scissor.extent = {image.size.x, image.size.y}
+//         vk.CmdSetScissor(cmd_buf, 0, 1, &scissor)
+//         vk.CmdSetScissorWithCountEXT(cmd_buf, 1, &scissor)
+// 
+//         masks : []vk.ColorComponentFlags = {
+//             {.R, .B, .G, .A}
+//         }
+// 
+//         vk.CmdSetColorWriteMaskEXT(cmd_buf, 0, 1, &masks[0])
+// 
+//         enables : []b32 = {
+//             true
+//         }
+// 
+//         vk.CmdSetColorBlendEnableEXT(cmd_buf, 0, 1, &enables[0])
+// 
+//         vk.CmdSetRasterizationSamplesEXT(cmd_buf, {._1})
+// 
+//         sample_masks : vk.SampleMask = 1
+// 
+//         vk.CmdSetSampleMaskEXT(cmd_buf, {._1}, &sample_masks)
+// 
+//         eqs : []vk.ColorBlendEquationEXT = {
+//             {
+//                 srcColorBlendFactor = .SRC_COLOR,
+//                 srcAlphaBlendFactor = .SRC_COLOR,
+//                 dstColorBlendFactor = .ONE_MINUS_SRC_COLOR,
+//                 dstAlphaBlendFactor = .ONE_MINUS_SRC_COLOR
+//             }
+//         }
+// 
+//         vk.CmdSetColorBlendEquationEXT(cmd_buf, 0, 1, &eqs[0])
+// 
+//         shader_chain := &Core_Context.assets.shaders[key.shader]
+// 
+//         stage_flags : [dynamic]vk.ShaderStageFlags
+//         shaders : [dynamic]vk.ShaderEXT
+//         for s in shader_chain.shader.shaders {
+//             append(&stage_flags, vk.ShaderStageFlags{gvk.stage_to_vk_enum(s.stage)})
+//             append(&shaders, s.obj)
+//         }
+// 
+//         vk.CmdBindShadersEXT(cmd_buf, u32(len(shader_chain.shader.shaders)), &stage_flags[0], &shaders[0])
+// 
+//         binds : [dynamic]vk.DescriptorBufferBindingInfoEXT
+//         for &d, i in shader_chain.shader.descriptors {
+//             bind_info : vk.DescriptorBufferBindingInfoEXT
+//             bind_info.sType = .DESCRIPTOR_BUFFER_BINDING_INFO_EXT
+//             bind_info.usage = {.RESOURCE_DESCRIPTOR_BUFFER_EXT, .SAMPLER_DESCRIPTOR_BUFFER_EXT, .SHADER_DEVICE_ADDRESS_EXT}
+//             bind_info.address = gvk.get_device_address(shader_chain.shader.descriptors[i].buffer)
+// 
+//             for &data, j in shader_chain.shader.descriptors[i].bindings {
+//                 offset : vk.DeviceSize = vk.DeviceSize(data.memory.offset)
+//                 buffer_idx : u32 = 0
+//                 vk.CmdSetDescriptorBufferOffsetsEXT(cmd_buf, .GRAPHICS, shader_chain.shader.layout, u32(j), 1, &buffer_idx, &offset)
+//             }
+//         }
+// 
+//         vk.CmdBindDescriptorBuffersEXT(cmd_buf, u32(len(binds)), &binds[0])
+// 
+//         vk.CmdBindIndexBuffer(cmd_buf, gvk.get_underlying_buffer(Core_Context.assets.arena, Core_Context.assets.index_data_raw.block), 0, .UINT16)
+// 
+//         vk.CmdDrawIndexedIndirect(cmd_buf, draw_commands.internal_buffer.buf, offset, draw_count, size_of(vk.DrawIndexedIndirectCommand))
+// 
+//         vk.CmdEndRenderingKHR(cmd_buf)
+//     }
+// }

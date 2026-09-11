@@ -11,8 +11,8 @@ Device :: struct {
 	physical 		: vk.PhysicalDevice,
 	queues 			: []QueueFamily,
 	instance 		: Instance,
-	device_memory 	: Device_Allocation(.DEVICE),
-	staging_memory 	: Device_Allocation(.HOST)
+	device_memory 	: ^Device_Allocation(.DEVICE),
+	staging_memory 	: ^Device_Allocation(.HOST)
 }
 
 create_device :: proc(instance : Instance, types : QueueTypes, dev_extensions : []string) -> (device : Device, ok : bool = true) {
@@ -21,10 +21,15 @@ create_device :: proc(instance : Instance, types : QueueTypes, dev_extensions : 
 	device.queues = populate_queue_family_properties(device.physical) or_return
 	device.core = create_logical_device(device.physical, device.queues, types, dev_extensions) or_return
 
+	device.device_memory = create_device_memory(device, .DEVICE) or_return
+	device.staging_memory = create_device_memory(device, .HOST) or_return
+
 	return
 }
 
 destroy_device :: proc(device : Device) {
+	destroy_device_memory(device, device.device_memory)
+	destroy_device_memory(device, device.staging_memory)
 	delete(device.queues)
 	vk.DestroyDevice(device.core, {})
 }

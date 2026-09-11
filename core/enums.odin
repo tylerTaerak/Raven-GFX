@@ -10,6 +10,7 @@ Descriptor_Data_Type :: enum {
 
 Descriptor_Type :: enum {
     UNIFORM,
+	BUFFER,
     IMAGE_SAMPLER
 }
 

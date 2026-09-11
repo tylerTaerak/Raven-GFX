@@ -8,7 +8,6 @@ import vmem "core:mem/virtual"
 import vulk "./vulkan"
 import vk "vendor:vulkan"
 import sdl "vendor:sdl3"
-import gmem "shared:gpu-memory"
 import "shared:raven-gfx/core"
 
 REQUIRED_DEVICE_EXTENSIONS : []string : {
@@ -69,24 +68,6 @@ _destroy_instance 			:: vulk.destroy_instance
 
 _create_device 				:: proc(instance : Instance) -> (Device, bool) {
 	return vulk.create_device(instance, {.GRAPHICS, .COMPUTE, .TRANSFER}, REQUIRED_DEVICE_EXTENSIONS)
-}
-
-// TODO)) There should be a way to only pass in certain queues in per usage reqs
-_allocate_gmem_device 			:: proc(device : Device) -> (gpu_dev : gmem.Device) {
-	gpu_dev.logical = device.core
-	gpu_dev.physical = device.physical
-
-
-	gpu_dev.queue_family_indicies = make([]u32, len(device.queues))
-	for i in 0..<len(device.queues) {
-		gpu_dev.queue_family_indicies[i] = device.queues[i].family_idx
-	}
-
-	return
-}
-
-_free_gmem_device 			:: proc(gpu_dev : gmem.Device) {
-	delete(gpu_dev.queue_family_indicies)
 }
 
 _destroy_device 			:: vulk.destroy_device
@@ -171,60 +152,58 @@ _destroy_semaphore          :: vulk.destroy_semaphore
 
 _wait_for_idle              :: vulk.wait_for_idle
 
-_allocate_memory 			:: proc(device : Device, type : core.Memory_Type, size : u32) -> (Memory, bool) {
-	mem_flags : vk.MemoryPropertyFlags
-	if type == .DEVICE {
-		mem_flags = {.DEVICE_LOCAL}
-	} else {
-		mem_flags = {.HOST_VISIBLE, .HOST_COHERENT}
-	}
+_create_host_buffer 		:: proc(device : Device, size : int) -> (vulk.Buffer(.HOST), bool) {
+	return vulk.create_buffer(device, size, .HOST, {.TRANSFER_SRC, .TRANSFER_DST, .INDIRECT_BUFFER, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS})
+}
+_create_device_buffer 		:: proc(device : Device, size : int) -> (vulk.Buffer(.DEVICE), bool) {
+	return vulk.create_buffer(device, size, .DEVICE, {.TRANSFER_SRC, .TRANSFER_DST, .INDIRECT_BUFFER, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS})
+}
+_destroy_buffer 			:: vulk.destroy_buffer
 
-
-	main_props : vk.PhysicalDeviceMaintenance3Properties
-	main_props.sType = .PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES
-
-	phys_props : vk.PhysicalDeviceProperties2
-	phys_props.sType = .PHYSICAL_DEVICE_PROPERTIES_2
-	phys_props.pNext = &main_props
-
-	vk.GetPhysicalDeviceProperties2(device.physical, &phys_props)
-
-	mem_props : vk.PhysicalDeviceMemoryProperties2
-	mem_props.sType = .PHYSICAL_DEVICE_MEMORY_PROPERTIES_2
-
-	vk.GetPhysicalDeviceMemoryProperties2(device.physical, &mem_props)
-
-	size := size
-
-	// allocate as much as possible if no size was given
-	if size == 0 {
-		size = u32(main_props.maxMemoryAllocationSize)
-	}
-
-	index : u32
-	for i in 0..<mem_props.memoryProperties.memoryTypeCount {
-		mem_type := mem_props.memoryProperties.memoryTypes[i]
-		if (mem_type.propertyFlags & mem_flags) == mem_flags {
-			index = i
-			break
-		}
-	}
-
-	return vulk.allocate_memory(device, index, size)
+_copy_buffer 				:: proc(
+	cmd : $T/Command_Collection($N),
+	index : int,
+	dst : $Q/Buffer($L),
+	src : $R/Buffer($E)) {
+	vulk.copy_buffer(cmd.buffers[index], dst, src)
+}
+_copy_buffer_image 			:: proc(
+	cmd : $T/Command_Collection($N),
+	index : int,
+	dst : Image,
+	src : $E/Buffer($L)) {
+	vulk.copy_buffer_to_image(cmd.buffers[index], dst, src)
 }
 
-_map_memory 				:: proc(device : Device, memory : Memory, size : u32) -> (ptr : rawptr, ok : bool) {
-	info : vk.MemoryMapInfo
-	info.sType = .MEMORY_MAP_INFO
-	info.memory = memory
-	info.size = vk.DeviceSize(size)
-	info.offset = 0
-	info.flags = {}
-
-	res := vk.MapMemory2(device.core, &info, &ptr)
-
-	ok = res == .SUCCESS
-
-	return
+_host_pointer 				:: proc(buffer : Buffer(.HOST)) -> rawptr {
+	return buffer.memory.host_ptr
 }
-_free_memory 				:: vulk.free_memory
+
+_create_shader 				:: vulk.create_shader
+_destroy_shader 			:: vulk.destroy_shader
+_bind_shader 				:: proc(
+	device : Device,
+	cmd : $T/Command_Collection($N),
+	index : int,
+	shaders : [core.Shader_Stage]Shader,
+	data : []Shader_Data) {
+	vulk.bind_shader(device, cmd.buffers[index], shaders, data)
+}
+
+_unbind_shader 				:: proc(
+	cmd : $T/Command_Collection($N),
+	index : int,
+	shaders : [core.Shader_Stage]Shader) {
+	vulk.unbind_shaders(cmd.buffers[index], shaders)
+}
+
+_create_descriptor_layout 	:: vulk.create_descriptor_layout
+_destroy_descriptor_layout  :: vulk.destroy_descriptor_layout
+
+_create_descriptor_set 		:: vulk.create_descriptor_set
+_destroy_descriptor_set 	:: vulk.destroy_descriptor_set
+
+_write_descriptor 			:: proc{
+	vulk.write_descriptor_buffer,
+	vulk.write_descriptor_image
+}

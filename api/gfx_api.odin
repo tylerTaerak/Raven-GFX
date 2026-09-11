@@ -1,6 +1,6 @@
 package api
+
 import "shared:raven-gfx/core"
-import gmem "shared:gpu-memory"
 
 // This file contains all of the functions needed by Raven for calling out to Graphics APIs
 // Actual implementations are found in API-specific files and libraries
@@ -15,26 +15,6 @@ destroy_instance :: proc(instance : Instance) {
 
 create_device :: proc(instance : Instance) -> (Device, bool) {
 	return _create_device(instance)
-}
-
-allocate_memory :: proc(device : Device, type : core.Memory_Type, size : u32) -> (Memory, bool) {
-	return _allocate_memory(device, type, size)
-}
-
-map_memory :: proc(device : Device, memory : Memory, size : u32) -> (rawptr, bool) {
-	return _map_memory(device, memory, size)
-}
-
-free_memory :: proc(device : Device, memory : Memory) {
-	_free_memory(device, memory)
-}
-
-allocate_gmem_device :: proc(device : Device) -> (gpu_dev : gmem.Device) {
-	return _allocate_gmem_device(device)
-}
-
-free_gmem_device :: proc(gpu_dev : gmem.Device) {
-	_free_gmem_device(gpu_dev)
 }
 
 destroy_device :: proc(device : Device) {
@@ -118,29 +98,11 @@ reset_fence :: proc(device : Device, fence : Fence) {
 	_reset_fence(device, fence)
 }
 
-create_descriptor_sets :: proc() {
+create_image :: proc(device : Device, size : [2]u32, format : core.Image_Format) -> (Image, bool) {
+	return _create_image(device, size, format)
 }
 
-destroy_descriptor_sets :: proc() {
-}
-
-bind_descriptor_sets :: proc() {
-}
-
-create_shader :: proc() {
-}
-
-destroy_shader :: proc() {
-}
-
-bind_shader :: proc() {
-}
-
-create_image :: proc(device : Device, size : [2]u32, format : core.Image_Format, usage : core.Image_Usage) -> (Image, bool) {
-	return _create_image(device, size, format, usage)
-}
-
-destroy_image :: proc(device : Device, img : Image) {
+destroy_image :: proc(device : Device, img : ^Image) {
 	_destroy_image(device, img)
 }
 
@@ -165,3 +127,71 @@ cmd_transition_image_usage :: proc(
 
 bind_image :: proc() {
 }
+
+create_host_buffer :: proc(device : Device, size : int) -> (Buffer(.HOST), bool) {
+	return _create_host_buffer(device, size)
+}
+
+create_device_buffer :: proc(device : Device, size : int) -> (Buffer(.DEVICE), bool) {
+	return _create_device_buffer(device, size)
+}
+
+destroy_buffer :: proc(device : Device, buffer : $T/Buffer($L)) {
+	_destroy_buffer(device, buffer)
+}
+
+copy_buffer :: proc(
+	cmd_set : $T/Command_Collection($N),
+	index : int,
+	dst : $Q/Buffer($L),
+	src : $R/Buffer($E)) {
+	_copy_buffer(cmd_set, index, dst, src)
+}
+
+copy_buffer_to_image :: proc(
+	 cmd_set : $T/Command_Collection($N),
+	 index : int,
+	 dst : Image,
+	 src : $E/Buffer($L)) {
+	_copy_buffer_image(cmd_set, index, dst, src)
+}
+
+host_pointer :: proc(buffer : Buffer(.HOST)) -> rawptr {
+	return _host_pointer(buffer)
+}
+
+create_shader_schema :: proc(device : Device, parameters : []Shader_Element) -> (Shader_Schema, bool) {
+	return _create_descriptor_layout(device, parameters)
+}
+
+destroy_shader_schema :: proc(device : Device, schema : Shader_Schema) {
+	_destroy_descriptor_layout(device, schema)
+}
+
+write_shader_data :: proc(device : Device, data : Shader_Data, field_name : string, write : $T/Buffer($L)) {
+}
+
+create_shader :: proc(device : Device, data : []byte, cfg : ^Shader_Config) -> (Shader, bool) {
+	return _create_shader(device, data, cfg)
+}
+
+destroy_shader :: proc(device : Device, shader : Shader) {
+	_destroy_shader(device, shader)
+}
+
+bind_shader :: proc(
+	device : Device,
+	cmd : $T/Command_Collection($N),
+	index : int,
+	shaders : [core.Shader_Stage]Shader,
+	data : []Shader_Data) {
+	_bind_shader(device, cmd, index, shaders, data)
+}
+
+unbind_shader :: proc(
+	cmd : $T/Command_Collection($N),
+	index : int,
+	shader : [core.Shader_Stage]Shader) {
+	_unbind_shader(cmd, index, shaders)
+}
+

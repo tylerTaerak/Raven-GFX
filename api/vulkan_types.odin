@@ -15,5 +15,12 @@ Fence 			   	:: vulk.Fence
 Command_Collection 	:: vulk.Command_Set
 Command_Buffer 	   	:: vulk.Command_Buffer
 Descriptor_Set 	   	:: vulk.Descriptor_Set
-Shader_Set 		   	:: vulk.Shader_Chain
-Shader 			   	:: vulk.Shader
+Slice 				:: vulk.Allocation
+
+Allocation_Location :: vulk.Allocation_Location
+
+Shader 				:: vulk.Shader
+Shader_Schema 		:: vulk.Descriptor_Layout
+Shader_Element 		:: vulk.Descriptor_Param
+Shader_Data 		:: vulk.Descriptor_Set
+Shader_Config 		:: vulk.Shader_Config
