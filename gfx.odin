@@ -97,6 +97,7 @@ present_frame :: proc(device : api.Device, ctx : ^$T/Graphics_Context($N), frame
 	}
 }
 
+
 // TODO)) Fill this out next
 transition_frame_layout :: proc(ctx : ^$T/Graphics_Context($N), frame : Draw_Frame) {
 	// calls some sort of api.cmd_image_barrier using the current frame and the desired usages

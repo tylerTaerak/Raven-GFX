@@ -65,3 +65,4 @@ present_image :: proc(device : Device, swapchain: ^$S/Swapchain($N), index: u32,
 wait_for_idle :: proc(device : Device) {
     vk.DeviceWaitIdle(device.core)
 }
+
