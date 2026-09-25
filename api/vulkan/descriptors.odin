@@ -6,7 +6,8 @@ import "shared:raven-gfx/core"
 Descriptor_Param :: struct {
 	name : string,
 	type : core.Descriptor_Type,
-	stage : core.Shader_Stage
+	stage : core.Shader_Stage,
+	element_count : Maybe(int)
 }
 
 Descriptor_Layout :: struct {
@@ -52,7 +53,13 @@ create_descriptor_layout :: proc(
 		binding := &bindings[i]
 		binding.descriptorType = _to_vk_descriptor_type(param.type)
 		binding.binding = u32(i)
-		binding.descriptorCount = 1
+
+		if count, has_count := param.element_count.?; has_count {
+			binding.descriptorCount = u32(count)
+		} else {
+			binding.descriptorCount = 1
+		}
+
 		binding.stageFlags = _to_vk_shader_stage(param.stage)
 	}
 
@@ -115,8 +122,10 @@ create_descriptor_set :: proc(
 				size = desc_buf_props.storageBufferDescriptorSize
 			case .UNIFORM:
 				size = desc_buf_props.uniformBufferDescriptorSize
-			case .IMAGE_SAMPLER:
-				size = desc_buf_props.combinedImageSamplerDescriptorSize
+			case .IMAGE:
+				size = desc_buf_props.sampledImageDescriptorSize
+			case .SAMPLER:
+				size = desc_buf_props.samplerDescriptorSize
 		}
 
 		// get a slice of the buffer
@@ -132,47 +141,18 @@ create_descriptor_set :: proc(
     return
 }
 
-write_descriptor_buffer :: proc(device : Device,
-	descriptor_set : Descriptor_Set,
-	set_index : int,
-	binding_index : int,
-	write_data : $T/Buffer($L)) {
-
-    desc_buf_props : vk.PhysicalDeviceDescriptorBufferPropertiesEXT
-    desc_buf_props.sType = .PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT
-
-    dev_props : vk.PhysicalDeviceProperties2KHR
-    dev_props.sType = .PHYSICAL_DEVICE_PROPERTIES_2_KHR
-    dev_props.pNext = &desc_buf_props
-
-    vk.GetPhysicalDeviceProperties2KHR(device.core, &dev_props)
-
-    addr_info : vk.DescriptorAddressInfoEXT
-    addr_info.sType = .DESCRIPTOR_ADDRESS_INFO_EXT
-    addr_info.address = get_buffer_address(device, write_data)
-    addr_info.range = vk.DeviceSize(write_data.size)
-
-    get_info : vk.DescriptorGetInfoEXT
-    get_info.sType = .DESCRIPTOR_GET_INFO_EXT
-    get_info.type = _to_vk_descriptor_type(descriptors[set_index].bindings[binding_index].type)
-    get_info.data.pUniformBuffer = &addr_info
-
-	host_ptr := rawptr(
-		uintptr(descriptor_set.buffer.memory.host_ptr) +
-		uintptr(descriptor_set.buffer.memory.raw.offset)
-	)
-
-    vk.GetDescriptorEXT(ctx.device, &get_info,
-        desc_buf_props.uniformBufferDescriptorSize,
-        host_ptr)
+Descriptor_Write_Data :: union{
+	Buffer(.DEVICE), // TODO)) Is there a better way to manage a generic like this?
+	Render_Image,
+	vk.Sampler
 }
 
-write_descriptor_image :: proc(
+write_descriptor_data :: proc(
 	device : Device,
 	descriptor_set : Descriptor_Set,
-	binding_index : int,
-	sampler : vk.Sampler,
-	image : Render_Image) {
+	parameter_info : Descriptor_Param,
+	write_data : Descriptor_Write_Data,
+	target_index : int = 0) {
 
     desc_buf_props : vk.PhysicalDeviceDescriptorBufferPropertiesEXT
     desc_buf_props.sType = .PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT
@@ -183,23 +163,56 @@ write_descriptor_image :: proc(
 
     vk.GetPhysicalDeviceProperties2KHR(device.physical, &dev_props)
 
-    image_info : vk.DescriptorImageInfo
-    image_info.imageLayout = .SHADER_READ_ONLY_OPTIMAL
-    image_info.imageView = image.view
-    image_info.sampler = sampler
-
     get_info : vk.DescriptorGetInfoEXT
     get_info.sType = .DESCRIPTOR_GET_INFO_EXT
-    get_info.type = .COMBINED_IMAGE_SAMPLER
-    get_info.data.pCombinedImageSampler = &image_info
+    get_info.type = .SAMPLER
+
+	size : int
+	addr_info : vk.DescriptorAddressInfoEXT
+	image_info : vk.DescriptorImageInfo
+	sampler : vk.Sampler
+
+	switch v in write_data {
+		case Buffer(.DEVICE):
+			addr_info.sType = .DESCRIPTOR_ADDRESS_INFO_EXT
+			addr_info.address = get_buffer_address(device, v)
+			addr_info.range = vk.DeviceSize(v.size)
+
+			if parameter_info.type == .UNIFORM {
+				get_info.data.pUniformBuffer = &addr_info
+				size = desc_buf_props.uniformBufferDescriptorSize
+			} else {
+				get_info.data.pStorageBuffer = &addr_info
+				size = desc_buf_props.storageBufferDescriptorSize
+			}
+
+		case Render_Image:
+			image_info.imageLayout = .SHADER_READ_ONLY_OPTIMAL
+			image_info.imageView = v.view
+
+			size = desc_buf_props.sampledImageDescriptorSize
+			get_info.data.pSampledImage = &image_info
+
+		case vk.Sampler:
+			sampler = v
+			get_info.data.pSampler = &sampler
+			size = desc_buf_props.samplerDescriptorSize
+	}
 
 	host_ptr := rawptr(
 		uintptr(descriptor_set.buffer.memory.host_ptr) +
 		uintptr(descriptor_set.buffer.memory.raw.offset)
 	)
 
+	if count, has_count := parameter_info.element_count.?; has_count {
+		host_ptr = rawptr(
+			uintptr(host_ptr) +
+			uintptr(size * target_index)
+		)
+	}
+
     vk.GetDescriptorEXT(device.core, &get_info,
-        desc_buf_props.combinedImageSamplerDescriptorSize,
+		size,
         host_ptr)
 }
 

@@ -168,6 +168,14 @@ destroy_shader_schema :: proc(device : Device, schema : Shader_Schema) {
 	_destroy_descriptor_layout(device, schema)
 }
 
+create_shader_data :: proc(device : Device, schema : Shader_Schema) -> (Shader_Data, bool) {
+	return _create_descriptor_set(device, schema)
+}
+
+destroy_shader_data :: proc(device : Device, data : ^Shader_Data) {
+	_destroy_descriptor_set(device, data)
+}
+
 write_shader_data :: proc(device : Device, data : Shader_Data, field_name : string, write : $T/Buffer($L)) {
 }
 
